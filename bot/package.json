@@ -1,0 +1,12 @@
+{
+  "name": "moneycircle-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node index.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
+  }
+}
+
