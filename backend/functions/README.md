@@ -118,3 +118,4 @@ curl -X POST http://localhost:54321/functions/v1/auth-telegram \
   -H "Content-Type: application/json" \
   -d '{"initData": "..."}'
 ```
+

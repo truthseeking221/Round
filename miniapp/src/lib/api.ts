@@ -2,12 +2,20 @@ import { env } from "./env";
 
 export type ApiError = { code: string; message?: string };
 
+// Mock mode: when FUNCTIONS_BASE_URL is not set, return mock data for UI preview
+const MOCK_MODE = !env.FUNCTIONS_BASE_URL;
+
+if (MOCK_MODE) {
+  console.info("[API] Running in MOCK MODE - no backend connected. Set VITE_FUNCTIONS_BASE_URL to connect to real backend.");
+}
+
 async function apiFetch<T>(path: string, options: { method: string; token?: string; body?: unknown } = { method: "GET" }): Promise<T> {
-  if (!env.FUNCTIONS_BASE_URL) {
-    throw { code: "MISSING_FUNCTIONS_BASE_URL", message: "Set VITE_FUNCTIONS_BASE_URL" } satisfies ApiError;
+  if (MOCK_MODE) {
+    // Return mock data based on the endpoint
+    return getMockResponse<T>(path, options);
   }
 
-  const url = `${env.FUNCTIONS_BASE_URL.replace(/\/$/, "")}/${path}`;
+  const url = `${env.FUNCTIONS_BASE_URL!.replace(/\/$/, "")}/${path}`;
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
 
@@ -25,6 +33,107 @@ async function apiFetch<T>(path: string, options: { method: string; token?: stri
     throw { code: err, message } satisfies ApiError;
   }
   return json as T;
+}
+
+// Mock responses for local development
+function getMockResponse<T>(path: string, _options: { method: string; token?: string; body?: unknown }): T {
+  // Simulate network delay
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      if (path === "auth-telegram") {
+        resolve({
+          session_token: "mock_session_token_12345",
+          user: {
+            telegram_user_id: 123456789,
+            username: "testuser",
+            first_name: "Test",
+            last_name: "User",
+            photo_url: null,
+            language_code: "en"
+          },
+          group: {
+            group_chat_id: -1001234567890,
+            title: "Demo Circle Group",
+            type: "supergroup",
+            bot_present: true,
+            bot_admin: true,
+            last_checked_at: new Date().toISOString()
+          }
+        } as T);
+      } else if (path === "circles-list") {
+        resolve({
+          circles: [
+            {
+              circle_id: "demo-circle-1",
+              name: "Demo Weekly Circle",
+              status: "Recruiting",
+              contract_address: null,
+              n_members: 5,
+              contribution_units: "10000000", // 10 USDT
+              current_cycle_index: 0,
+              onchain_due_at: null,
+              created_at: new Date().toISOString()
+            },
+            {
+              circle_id: "demo-circle-2",
+              name: "Demo Monthly Circle",
+              status: "Active",
+              contract_address: "EQDemo...Contract",
+              n_members: 4,
+              contribution_units: "50000000", // 50 USDT
+              current_cycle_index: 2,
+              onchain_due_at: new Date(Date.now() + 86400000 * 3).toISOString(),
+              created_at: new Date(Date.now() - 86400000 * 30).toISOString()
+            }
+          ]
+        } as T);
+      } else if (path.startsWith("circles-status")) {
+        resolve({
+          circle: {
+            circle_id: "demo-circle-1",
+            group_chat_id: -1001234567890,
+            name: "Demo Weekly Circle",
+            status: "Recruiting",
+            contract_address: null,
+            jetton_master: null,
+            n_members: 5,
+            contribution_units: "10000000",
+            total_cycles: 5,
+            interval_sec: 604800,
+            grace_sec: 86400,
+            take_rate_bps: 100,
+            collateral_rate_bps: 1000,
+            max_discount_bps: 500,
+            vesting_bps_cycle1: 2000,
+            early_lock_rate_bps_cycle1: 3000,
+            commit_duration_sec: 1800,
+            reveal_duration_sec: 1800,
+            max_pot_cap_units: "1000000000",
+            min_deposit_units: "100000",
+            current_cycle_index: 0,
+            onchain_phase: null,
+            onchain_funded_count: null,
+            onchain_jetton_wallet: null,
+            onchain_due_at: null,
+            onchain_grace_end_at: null,
+            onchain_commit_end_at: null,
+            onchain_reveal_end_at: null,
+            last_indexer_attempt_at: null,
+            last_indexed_at: null,
+            last_indexer_error: null
+          },
+          member: null
+        } as T);
+      } else if (path === "circles-create") {
+        resolve({ ok: true, circle: { circle_id: "new-demo-circle", status: "Recruiting" } } as T);
+      } else if (path === "circles-join") {
+        resolve({ ok: true, member: { join_status: "joined" } } as T);
+      } else {
+        // Default mock response
+        resolve({ ok: true, mock: true } as T);
+      }
+    }, 300);
+  }) as T;
 }
 
 export type TgUser = {
@@ -200,4 +309,21 @@ export async function depositIntent(
   params: { circle_id: string; purpose: "collateral" | "prefund"; amount_usdt: string | number }
 ): Promise<DepositIntentResponse> {
   return await apiFetch<DepositIntentResponse>("circles-deposit-intent", { method: "POST", token, body: params });
+}
+
+// ============================================
+// AUCTION API
+// ============================================
+
+export type PublishBidResponse = { ok: true };
+
+/**
+ * Store bid data server-side for convenience (optional - bid is on-chain)
+ * This helps users recover their bid if they lose local storage
+ */
+export async function publishBid(
+  token: string,
+  params: { circle_id: string; bid_amount: string; salt: string }
+): Promise<PublishBidResponse> {
+  return await apiFetch<PublishBidResponse>("auction-publish-bid", { method: "POST", token, body: params });
 }

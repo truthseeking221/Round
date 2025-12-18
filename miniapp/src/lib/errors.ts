@@ -14,6 +14,9 @@ export function describeError(err: ApiError): HumanError {
     case "AUTH_INVALID":
       return { title: "Session expired", description: "Please reopen the mini app in Telegram or tap Retry." };
 
+    case "TG_INITDATA_MISSING":
+      return { title: "Open in Telegram", description: "Open the mini app inside Telegram. For local dev, set VITE_DEV_INIT_DATA." };
+
     case "TG_GROUP_REQUIRED":
       return { title: "Open in a group", description: "Open the mini app inside the MoneyCircle Telegram group." };
     case "TG_NOT_IN_GROUP":

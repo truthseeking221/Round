@@ -18,12 +18,47 @@ export function AuthProvider(props: { children: React.ReactNode }) {
   const [devInitData, setDevInitData] = useState<string>(() => env.DEV_INIT_DATA);
   const [state, setState] = useState<AuthState>({ status: "loading", token: null, user: null, group: null, error: null });
 
+  // MOCK MODE: Bypass Telegram Auth check if environment is configured for mocks
+  const useMock = !env.FUNCTIONS_BASE_URL; // Consistent with api.ts logic
+
   useEffect(() => {
     initTelegramUi();
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+
+    // --- MOCK FLOW ---
+    if (useMock) {
+      console.warn("[Auth] Mock Mode enabled. Logging in as fake user.");
+      setTimeout(() => {
+        if (cancelled) return;
+        setState({
+          status: "ready",
+          token: "mock_token_dev",
+          user: {
+            telegram_user_id: 999999,
+            username: "dev_user",
+            first_name: "Developer",
+            last_name: "(Mock)",
+            photo_url: null,
+            language_code: "en"
+          },
+          group: {
+            group_chat_id: -100999,
+            title: "Dev Sandbox Group",
+            type: "supergroup",
+            bot_present: true,
+            bot_admin: true,
+            last_checked_at: new Date().toISOString()
+          },
+          error: null
+        });
+      }, 500);
+      return () => { cancelled = true; };
+    }
+
+    // --- REAL FLOW ---
     const telegramInitData = getTelegramInitData();
     const initData = (telegramInitData && telegramInitData.trim()) || (env.DEV_INIT_DATA.trim() || null);
 
@@ -38,9 +73,7 @@ export function AuthProvider(props: { children: React.ReactNode }) {
           error: { code: "TG_INITDATA_MISSING", message: "Open inside Telegram. For local dev, set VITE_DEV_INIT_DATA." }
         });
       });
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
 
     authTelegram(initData)
@@ -56,10 +89,18 @@ export function AuthProvider(props: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [useMock]);
 
   const refresh = useCallback(async () => {
     setState({ status: "loading", token: null, user: null, group: null, error: null });
+
+    // Mock Refresh
+    if (useMock) {
+      setTimeout(() => {
+        setState(prev => ({ ...prev, status: "ready" })); // Keep existing data
+      }, 500);
+      return;
+    }
 
     const telegramInitData = getTelegramInitData();
     const initData = (telegramInitData && telegramInitData.trim()) || (devInitData.trim() || null);
@@ -80,7 +121,7 @@ export function AuthProvider(props: { children: React.ReactNode }) {
     } catch (e: unknown) {
       setState({ status: "error", token: null, user: null, group: null, error: asApiError(e) });
     }
-  }, [devInitData]);
+  }, [devInitData, useMock]);
 
   const value = useMemo<AuthContextValue>(() => ({ ...state, devInitData, setDevInitData, refresh }), [state, devInitData, refresh]);
 

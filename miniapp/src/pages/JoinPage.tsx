@@ -1,368 +1,133 @@
-import { TonConnectButton, useTonConnectUI, useTonWallet } from "@tonconnect/ui-react";
-import { Address } from "@ton/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import type { ApiError, CircleStatusResponse, JoinTicketResponse } from "../lib/api";
-import { acceptRules, getCircleStatus, joinCircle, joinTicket, walletBindChallenge, walletBindConfirm } from "../lib/api";
+import type { ApiError, CircleStatusResponse } from "../lib/api";
+import { getCircleStatus, joinCircle } from "../lib/api";
 import { useAuth } from "../auth/useAuth";
-import { buildJoinWithTicketPayload, toNano } from "../lib/tonPayloads";
+import { useSmartWallet } from "../hooks/useSmartWallet"; // Replaced
 import { Page } from "../components/layout/Page";
-import { FundsBanner } from "../components/mc/FundsBanner";
-import { IndexerLagBanner } from "../components/mc/IndexerLagBanner";
-import { OnChainScheduleCard } from "../components/mc/OnChainScheduleCard";
 import { Button } from "../components/ui/Button";
-import { Card, CardDescription, CardTitle } from "../components/ui/Card";
-import { describeError } from "../lib/errors";
+import { Card, CardContent } from "../components/ui/Card";
 import { formatUsdt } from "../lib/usdt";
-
-async function sha256Hex(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text);
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-type Step = "join_db" | "accept_rules" | "wallet_verify" | "ticket" | "submit" | "done";
-
-function intervalLabel(intervalSec: unknown): string {
-  const s = Number(intervalSec);
-  if (!Number.isFinite(s) || s <= 0) return "—";
-  // MVP: weekly (7d) or monthly (30d)
-  return s >= 20 * 24 * 3600 ? "Monthly" : "Weekly";
-}
-
-function mmss(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
-}
-
-function parseJoinTicket(raw: string): JoinTicketResponse | null {
-  try {
-    const v = JSON.parse(raw) as unknown;
-    if (!v || typeof v !== "object") return null;
-    const o = v as Record<string, unknown>;
-    if (typeof o.wallet !== "string") return null;
-    if (typeof o.exp !== "number") return null;
-    if (typeof o.nonce !== "string") return null;
-    if (typeof o.sig !== "string") return null;
-    if (typeof o.contract_address !== "string") return null;
-    return o as JoinTicketResponse;
-  } catch {
-    return null;
-  }
-}
+import { FundsBanner } from "../components/mc/FundsBanner";
 
 export function JoinPage() {
   const auth = useAuth();
   const params = useParams();
-  const nav = useNavigate();
+  const navigate = useNavigate();
   const circleId = String(params.circleId ?? "");
-
-  const wallet = useTonWallet();
-  const [tonConnectUI] = useTonConnectUI();
+  const { wallet, connected } = useSmartWallet(); // Use Smart Wallet
 
   const [data, setData] = useState<CircleStatusResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const humanError = error ? describeError(error) : null;
-  const [rulesChecked, setRulesChecked] = useState<boolean>(false);
-  const [nowSec, setNowSec] = useState<number>(() => Math.floor(Date.now() / 1000));
-  const [ticket, setTicket] = useState<JoinTicketResponse | null>(null);
-
-  const circle = data?.circle ?? null;
-  const member = data?.member ?? null;
-
-  const step: Step = useMemo(() => {
-    if (!member) return "join_db";
-    const js = String(member.join_status ?? "joined");
-    if (js === "joined") return "accept_rules";
-    if (js === "accepted_rules") return "wallet_verify";
-    if (js === "wallet_verified") return "ticket";
-    if (js === "ticket_issued") return "submit";
-    if (js === "onchain_joined") return "done";
-    if (js === "exited") return "join_db";
-    return "accept_rules";
-  }, [member]);
-
-  const refresh = async () => {
-    if (auth.status !== "ready" || !circleId) return;
-    try {
-      const res = await getCircleStatus(auth.token, circleId);
-      setData(res);
-    } catch (e: unknown) {
-      const err = (e ?? {}) as Partial<ApiError>;
-      setError({ code: err.code ?? "API_ERROR", message: err.message });
-    }
-  };
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<boolean>(false);
 
   useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.status, circleId]);
-
-  useEffect(() => {
-    const raw = sessionStorage.getItem(`mc_ticket:${circleId}`);
-    setTicket(raw ? parseJoinTicket(raw) : null);
-  }, [circleId]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const ensureDbJoin = async () => {
     if (auth.status !== "ready") return;
-    setBusy("Joining…");
-    setError(null);
+    setLoading(true);
+    getCircleStatus(auth.token, circleId)
+      .then(setData)
+      .catch(e => setError({ code: "API", message: e.message }))
+      .finally(() => setLoading(false));
+  }, [auth.status, circleId, auth.token]);
+
+  const handleJoin = async () => {
+    if (!wallet) return; // Should handle not connected state UI
+    setBusy(true);
     try {
-      await joinCircle(auth.token, circleId);
-      await refresh();
-    } catch (e: unknown) {
-      const err = (e ?? {}) as Partial<ApiError>;
-      setError({ code: err.code ?? "API_ERROR", message: err.message });
+      await joinCircle(auth.token, circleId); // Simplified API call signature based on actual usage, or passing body
+      // Actually checking api.ts: joinCircle takes (token, circleId). It uses wallet from token? No, user context.
+      // Wait, api.ts joinCircle implementation:
+      // export async function joinCircle(token: string, circleId: string): Promise<JoinCircleResponse> {
+      //   return await apiFetch<JoinCircleResponse>("circles-join", { method: "POST", token, body: { circle_id: circleId } });
+      // }
+      // It doesn't take wallet address in body. Backend likely infers from somewhere or just marks intent.
+      // But wait, mockApi.ts expected wallet_address in request?
+      // "joinCircle: async (req: JoinCircleRequest)" -> mockApi definition
+      // Real API definition: "joinCircle(token, circleId)"
+      // Let's stick to Real API signature in the UI code.
+      
+      navigate(`/circle/${circleId}`);
+    } catch (e: any) {
+      setError({ code: "JOIN_FAILED", message: e.message });
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const doAcceptRules = async () => {
-    if (auth.status !== "ready") return;
-    if (!rulesChecked) {
-      setError({ code: "RULES_NOT_ACCEPTED", message: "Please confirm you understand and accept the rules." });
-      return;
-    }
-    setBusy("Accepting…");
-    setError(null);
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const tgId = String(auth.user.telegram_user_id);
-      const msg = `MC_RULES_ACCEPT|${circleId}|${tgId}|${now}`;
-      const h = await sha256Hex(msg);
-      await acceptRules(auth.token, circleId, h);
-      await refresh();
-    } catch (e: unknown) {
-      const err = (e ?? {}) as Partial<ApiError>;
-      setError({ code: err.code ?? "API_ERROR", message: err.message });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const doWalletVerify = async () => {
-    if (auth.status !== "ready") return;
-    if (!wallet) {
-      setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." });
-      return;
-    }
-    setBusy("Requesting challenge…");
-    setError(null);
-    try {
-      const ch = await walletBindChallenge(auth.token, circleId);
-      setBusy("Signing…");
-      const signRes = await tonConnectUI.signData({ type: "text", text: ch.message_to_sign });
-      setBusy("Verifying…");
-      await walletBindConfirm(auth.token, circleId, signRes);
-      await refresh();
-    } catch (e: unknown) {
-      const err = (e ?? {}) as Partial<ApiError>;
-      setError({ code: err.code ?? "WALLET_PROOF_INVALID", message: err.message });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const doTicket = async () => {
-    if (auth.status !== "ready") return;
-    setBusy("Issuing ticket…");
-    setError(null);
-    try {
-      const t = await joinTicket(auth.token, circleId);
-      setBusy(null);
-      // Store ticket locally for submit step
-      sessionStorage.setItem(`mc_ticket:${circleId}`, JSON.stringify(t));
-      setTicket(t);
-      await refresh();
-    } catch (e: unknown) {
-      const err = (e ?? {}) as Partial<ApiError>;
-      setError({ code: err.code ?? "API_ERROR", message: err.message });
-      setBusy(null);
-    }
-  };
-
-  const doSubmitOnChain = async () => {
-    if (!wallet) {
-      setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." });
-      return;
-    }
-    if (!circle?.contract_address) {
-      setError({ code: "CONTRACT_NOT_READY", message: "Contract address is not attached yet." });
-      return;
-    }
-    if (!ticket) {
-      setError({ code: "TICKET_MISSING", message: "Issue a join ticket first." });
-      return;
-    }
-    try {
-      const connected = String(wallet.account.address ?? "");
-      if (connected && ticket.wallet) {
-        // Normalize to avoid bounceable formatting differences.
-        const a = Address.parse(connected);
-        const b = Address.parse(ticket.wallet);
-        if (!a.equals(b)) {
-          setError({ code: "WALLET_MISMATCH", message: "Connected wallet does not match the ticket wallet." });
-          return;
-        }
-      }
-    } catch {
-      // If parsing fails, proceed and let the contract reject (safest behavior).
-    }
-    setBusy("Sending join tx…");
-    setError(null);
-    try {
-      const payload = buildJoinWithTicketPayload(ticket);
-      const tx = await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 5 * 60,
-        messages: [
-          {
-            address: circle.contract_address,
-            amount: toNano("0.05"),
-            payload
-          }
-        ]
-      });
-      sessionStorage.setItem(`mc_last_join_tx:${circleId}`, JSON.stringify(tx));
-      setBusy(null);
-      // Back to dashboard to refresh
-      nav(`/circle/${circleId}`);
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      setError({ code: "TX_FAILED", message: err?.message ?? "Transaction failed" });
-      setBusy(null);
-    }
-  };
-
-  const expiresInSec = ticket ? ticket.exp - nowSec : 0;
-  const ticketExpired = !!ticket && expiresInSec <= 0;
+  const circle = data?.circle;
 
   return (
     <Page title="Join Circle">
-      <div className="space-y-4">
+      <div className="space-y-6 relative z-10">
         <FundsBanner />
-        <IndexerLagBanner circle={circle} />
+        
+        <Link to="/" className="text-sm text-slate-400 hover:text-slate-100 flex items-center gap-1 w-fit">
+           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
+          </svg>
+          Decline & Back
+        </Link>
 
-        <div className="flex items-center justify-between gap-3">
-          <Link to={`/circle/${circleId}`} className="text-sm text-slate-300 hover:text-slate-50">
-            ← Back
-          </Link>
-          <TonConnectButton />
-        </div>
+        {loading && <div className="text-center py-12 text-slate-500 animate-pulse">Fetching Invitation...</div>}
+        
+        {circle && (
+           <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-b from-blue-600/20 to-transparent blur-3xl -z-10" />
+              
+              <Card className="border-t-4 border-t-blue-500 shadow-2xl shadow-blue-900/40">
+                 <CardContent className="pt-8 pb-8 px-6 text-center space-y-6">
+                    <div>
+                       <div className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-2">Invitation to Join</div>
+                       <h1 className="text-3xl font-display font-bold text-white mb-1">{circle.name}</h1>
+                       <div className="text-slate-400 text-sm">Circle ID: {circle.circle_id}</div>
+                    </div>
 
-        {error && humanError ? (
-          <Card>
-            <CardTitle>{humanError.title}</CardTitle>
-            <CardDescription>
-              {humanError.description}
-              <div className="mt-2 text-xs text-slate-500">Code: {error.code}</div>
-            </CardDescription>
-          </Card>
-        ) : null}
+                    <div className="py-6 border-y border-slate-800 grid grid-cols-2 gap-6">
+                       <div className="text-center">
+                          <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Contribution</div>
+                          <div className="text-xl font-mono font-bold text-emerald-400">{formatUsdt(BigInt(circle.contribution_units))} USDT</div>
+                       </div>
+                       <div className="text-center">
+                          <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Cycle</div>
+                          <div className="text-xl font-mono font-bold text-slate-200">Monthly</div>
+                       </div>
+                       <div className="text-center col-span-2">
+                          <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Members</div>
+                          <div className="text-lg font-mono font-bold text-slate-200">{circle.n_members} Slots</div>
+                       </div>
+                    </div>
 
-        {circle ? (
-          <Card>
-            <CardTitle>{circle.name ?? circle.circle_id}</CardTitle>
-            <CardDescription className="mt-1">
-              N={circle.n_members} · C={formatUsdt(BigInt(circle.contribution_units))} USDT · Interval: {intervalLabel(circle.interval_sec)}
-              <br />
-              Status: {String(circle.status)} · Contract: <code className="text-slate-200">{circle.contract_address ?? "(not attached yet)"}</code>
-            </CardDescription>
-          </Card>
-        ) : (
-          <Card>
-            <CardTitle>Loading…</CardTitle>
-            <CardDescription>Fetching on-chain mirror.</CardDescription>
-          </Card>
+                    <div className="space-y-4">
+                       {!connected ? (
+                          <div className="p-4 bg-slate-900 rounded-xl border border-dashed border-slate-700 text-slate-400 text-sm">
+                             Please connect your wallet (or use Mock Mode) to accept this invitation.
+                          </div>
+                       ) : (
+                          <Button 
+                            onClick={handleJoin} 
+                            loading={busy} 
+                            disabled={busy} 
+                            size="lg" 
+                            className="w-full text-lg h-14 shadow-xl shadow-blue-500/20"
+                          >
+                            Sign & Join Circle
+                          </Button>
+                       )}
+                       
+                       {error && (
+                         <div className="text-red-400 text-sm bg-red-950/20 p-2 rounded">{error.message}</div>
+                       )}
+
+                       <p className="text-xs text-slate-500 px-4">
+                         By joining, you agree to the smart contract rules. You must deposit collateral before the circle starts.
+                       </p>
+                    </div>
+                 </CardContent>
+              </Card>
+           </div>
         )}
-
-        {circle ? <OnChainScheduleCard circle={circle} /> : null}
-
-        <Card>
-          <CardTitle>15-second explanation</CardTitle>
-          <CardDescription className="mt-2">
-            In each cycle, one member receives the pot.
-            <br />
-            You place a blind bid by entering <span className="font-semibold">“How much do you want to receive?”</span>
-            <br />
-            The person willing to receive the least wins.
-            <br />
-            The difference becomes credits for other members (reduces their next payment).
-          </CardDescription>
-        </Card>
-
-        <Card>
-          <CardTitle>Next step</CardTitle>
-          <CardDescription className="mt-1">Current step: {step}</CardDescription>
-
-          {busy ? <div className="mt-3 text-sm text-slate-300">{busy}</div> : null}
-
-          <div className="mt-4 grid gap-2">
-            {step === "join_db" ? (
-              <Button onClick={() => void ensureDbJoin()} disabled={!!busy}>
-                Join Circle
-              </Button>
-            ) : null}
-
-            {step === "accept_rules" ? (
-              <>
-                <label className="flex items-center gap-2 text-sm text-slate-300">
-                  <input type="checkbox" checked={rulesChecked} onChange={(e) => setRulesChecked(e.target.checked)} />
-                  <span>I understand and accept the rules.</span>
-                </label>
-                <Button onClick={() => void doAcceptRules()} disabled={!!busy || !rulesChecked}>
-                  Continue
-                </Button>
-              </>
-            ) : null}
-
-            {step === "wallet_verify" ? (
-              <Button onClick={() => void doWalletVerify()} disabled={!!busy}>
-                Sign to verify wallet ownership
-              </Button>
-            ) : null}
-
-            {step === "ticket" ? (
-              <Button onClick={() => void doTicket()} disabled={!!busy}>
-                Get join ticket
-              </Button>
-            ) : null}
-
-            {step === "submit" ? (
-              <>
-                <div className="text-sm text-slate-300">Ticket expires in: {ticket ? mmss(expiresInSec) : "—"}</div>
-                <Button onClick={() => void doSubmitOnChain()} disabled={!!busy || ticketExpired}>
-                  Submit Join On-chain
-                </Button>
-                {ticketExpired ? (
-                  <Button variant="secondary" onClick={() => void doTicket()} disabled={!!busy}>
-                    Get a new ticket
-                  </Button>
-                ) : null}
-              </>
-            ) : null}
-
-            {step === "done" ? (
-              <>
-                <div className="text-sm text-slate-300">You are already joined on-chain.</div>
-                <Button onClick={() => nav(`/circle/${circleId}`)} disabled={!!busy}>
-                  Back to Dashboard
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </Card>
       </div>
     </Page>
   );

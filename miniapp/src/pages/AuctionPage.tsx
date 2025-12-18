@@ -1,239 +1,188 @@
-import * as React from "react";
+import { TonConnectButton } from "@tonconnect/ui-react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { TonConnectButton, useTonAddress, useTonConnectUI } from "@tonconnect/ui-react";
-import { Address } from "@ton/core";
 
-import { getCircleStatus } from "../lib/api";
 import type { ApiError, CircleStatusResponse } from "../lib/api";
-import { formatUsdt, parseUsdtToUnits } from "../lib/usdt";
-import { buildBidCommitHash, buildCommitBody, buildRevealBody, randomU256 } from "../lib/ton";
+import { getCircleStatus, publishBid } from "../lib/api";
+import { useAuth } from "../auth/useAuth";
+import { buildCommitBidPayload, buildRevealBidPayload, toNano } from "../lib/tonPayloads";
+import { useSmartWallet } from "../hooks/useSmartWallet"; // Replaced
 import { Page } from "../components/layout/Page";
 import { FundsBanner } from "../components/mc/FundsBanner";
-import { IndexerLagBanner } from "../components/mc/IndexerLagBanner";
 import { OnChainScheduleCard } from "../components/mc/OnChainScheduleCard";
 import { Button } from "../components/ui/Button";
-import { Card, CardDescription, CardTitle } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
-import { useSessionToken } from "../auth/useSessionToken";
-import { describeError } from "../lib/errors";
-
-function diffText(targetIso: string | null, nowSec: number): string {
-  if (!targetIso) return "—";
-  const target = Math.floor(Date.parse(targetIso) / 1000);
-  if (!Number.isFinite(target)) return "—";
-  const d = Math.max(0, target - nowSec);
-  const m = Math.floor(d / 60);
-  const s = d % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/Card";
 
 export function AuctionPage() {
-  const token = useSessionToken();
-  const { circleId } = useParams();
-  const [tonConnectUI] = useTonConnectUI();
-  const wallet = useTonAddress(false);
+  const auth = useAuth();
+  const params = useParams();
+  const circleId = String(params.circleId ?? "");
+  
+  const { wallet, sendTransaction } = useSmartWallet(); // Use Smart Wallet
 
-  const [data, setData] = React.useState<CircleStatusResponse | null>(null);
-  const [error, setError] = React.useState<ApiError | null>(null);
-  const [payout, setPayout] = React.useState("");
-  const [nowSec, setNowSec] = React.useState<number>(() => Math.floor(Date.now() / 1000));
-  const humanError = error ? describeError(error) : null;
+  const [data, setData] = useState<CircleStatusResponse | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (!circleId) return;
-    getCircleStatus(token, circleId)
-      .then(setData)
-      .catch((e: unknown) => {
-        const maybe = (e ?? {}) as { code?: unknown; message?: unknown };
-        const code = typeof maybe.code === "string" ? maybe.code : "FAILED";
-        const msg = typeof maybe.message === "string" ? maybe.message : undefined;
-        setError({ code, message: msg });
-      });
-  }, [token, circleId]);
+  const [bidAmount, setBidAmount] = useState("");
+  const [salt, setSalt] = useState("");
 
-  React.useEffect(() => {
-    const id = window.setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
-    return () => window.clearInterval(id);
-  }, []);
+  const refresh = async () => {
+    if (auth.status !== "ready") return;
+    setLoading(true);
+    try {
+      const res = await getCircleStatus(auth.token, circleId);
+      setData(res);
+    } catch (e: any) {
+      setError({ code: "API", message: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (!circleId) return <Page title="Auction">Missing circle id</Page>;
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(() => {
+       // Optional: Auto-refresh schedule logic could go here
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [auth.status, circleId]);
+
   const circle = data?.circle;
-  const member = data?.member ?? null;
-
-  const pot = circle ? BigInt(circle.n_members) * BigInt(circle.contribution_units) : 0n;
-  const minPayout = circle ? (pot * BigInt(10_000 - Number(circle.max_discount_bps))) / 10_000n : 0n;
-
-  const commitEnd = circle?.onchain_commit_end_at ?? null;
-  const revealEnd = circle?.onchain_reveal_end_at ?? null;
-
-  const commitEndSec = commitEnd ? Math.floor(Date.parse(commitEnd) / 1000) : 0;
-  const revealEndSec = revealEnd ? Math.floor(Date.parse(revealEnd) / 1000) : 0;
-  const now = nowSec;
-
-  const stage = commitEndSec && now < commitEndSec ? "commit" : revealEndSec && now < revealEndSec ? "reveal" : "closed";
-  const cannotBid = Boolean(member?.has_won);
-
-  async function onCommit() {
-    setError(null);
-    try {
-      if (!circle?.contract_address) throw new Error("CONTRACT_NOT_READY");
-      if (!wallet) throw new Error("WALLET_NOT_CONNECTED");
-      if (member?.wallet_address) {
-        try {
-          if (!Address.parse(wallet).equals(Address.parse(String(member.wallet_address)))) {
-            throw new Error("WALLET_MISMATCH");
-          }
-        } catch {
-          // ignore and let contract reject
-        }
-      }
-
-      const payoutUnits = parseUsdtToUnits(payout);
-      if (payoutUnits < minPayout || payoutUnits > pot) throw new Error("BID_OUT_OF_BOUNDS");
-
-      const salt = randomU256();
-      const commitHash = buildBidCommitHash({
-        contractAddress: circle.contract_address,
-        cycleIndex: Number(circle.current_cycle_index),
-        walletAddress: wallet,
-        payoutWantedUnits: payoutUnits,
-        salt
-      });
-
-      localStorage.setItem(`mc_bid_${circleId}`, JSON.stringify({ payout: payoutUnits.toString(), salt: salt.toString() }));
-
-      const payload = buildCommitBody(commitHash);
-      await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 300,
-        messages: [{ address: circle.contract_address, amount: "200000000", payload }]
-      });
-    } catch (e: unknown) {
-      const maybe = (e ?? {}) as { message?: unknown };
-      const msg = typeof maybe.message === "string" ? maybe.message : "FAILED";
-      if (msg === "CONTRACT_NOT_READY" || msg === "WALLET_NOT_CONNECTED" || msg === "BID_OUT_OF_BOUNDS" || msg === "WALLET_MISMATCH") {
-        setError({ code: msg });
-      } else {
-        setError({ code: "TX_FAILED", message: msg });
-      }
-    }
-  }
-
-  async function onReveal() {
-    setError(null);
-    try {
-      if (!circle?.contract_address) throw new Error("CONTRACT_NOT_READY");
-      if (!wallet) throw new Error("WALLET_NOT_CONNECTED");
-      if (member?.wallet_address) {
-        try {
-          if (!Address.parse(wallet).equals(Address.parse(String(member.wallet_address)))) {
-            throw new Error("WALLET_MISMATCH");
-          }
-        } catch {
-          // ignore and let contract reject
-        }
-      }
-      const raw = localStorage.getItem(`mc_bid_${circleId}`);
-      if (!raw) throw new Error("MISSING_BID_DATA");
-      const parsed = JSON.parse(raw) as { payout: string; salt: string };
-
-      const payload = buildRevealBody(BigInt(parsed.payout), BigInt(parsed.salt));
-      await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 300,
-        messages: [{ address: circle.contract_address, amount: "200000000", payload }]
-      });
-    } catch (e: unknown) {
-      const maybe = (e ?? {}) as { message?: unknown };
-      const msg = typeof maybe.message === "string" ? maybe.message : "FAILED";
-      if (msg === "MISSING_BID_DATA") {
-        setError({ code: "MISSING_BID_DATA", message: "You need your saved bid data to reveal. Please contact support if you lost it." });
-      } else if (msg === "CONTRACT_NOT_READY" || msg === "WALLET_NOT_CONNECTED" || msg === "WALLET_MISMATCH") {
-        setError({ code: msg });
-      } else {
-        setError({ code: "TX_FAILED", message: msg });
-      }
-    }
-  }
+  
+  // Phase logic
+  const now = Date.now() / 1000;
+  const commitEnd = circle?.onchain_commit_end_at ? Date.parse(circle.onchain_commit_end_at)/1000 : 0;
+  const revealEnd = circle?.onchain_reveal_end_at ? Date.parse(circle.onchain_reveal_end_at)/1000 : 0;
+  
+  const isCommitPhase = now < commitEnd;
+  const isRevealPhase = now >= commitEnd && now < revealEnd;
 
   return (
-    <Page title="Auction">
-      <div className="space-y-4">
+    <Page title="Auction Room">
+      <div className="space-y-6">
         <FundsBanner />
-        <IndexerLagBanner circle={circle ?? null} />
-
-        <div className="flex items-center justify-between gap-3">
-          <Link to={`/circle/${circleId}`} className="text-sm text-slate-300 hover:text-slate-50">
-            ← Back
-          </Link>
-          <TonConnectButton />
+        
+        <div className="flex items-center justify-between">
+           <Link to={`/circle/${circleId}`} className="text-sm text-slate-400 hover:text-slate-100 flex items-center gap-1">
+             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
+            </svg>
+            Back to Circle
+           </Link>
+           <TonConnectButton className="scale-90 origin-right" />
         </div>
 
-        {!circle ? (
-          <Card>
-            <CardTitle>Loading…</CardTitle>
-            <CardDescription>Fetching on-chain mirror.</CardDescription>
-          </Card>
-        ) : (
-          <Card>
-            <CardTitle>{stage === "commit" ? "Blind Auction — Commit" : stage === "reveal" ? "Blind Auction — Reveal" : "Auction"}</CardTitle>
-            <CardDescription>
-              Commit ends in: {diffText(commitEnd, nowSec)} · Reveal ends in: {diffText(revealEnd, nowSec)}
-            </CardDescription>
+        {circle && <OnChainScheduleCard circle={circle} />}
 
-            <div className="mt-4 space-y-3 text-sm text-slate-200">
-              <div className="rounded-xl bg-slate-950/40 p-3 ring-1 ring-slate-800 text-sm text-slate-300">
-                <div>Commit ends: {commitEnd ?? "—"}</div>
-                <div>Reveal ends: {revealEnd ?? "—"}</div>
-              </div>
+        <div className="grid md:grid-cols-2 gap-6">
+           {/* Commit Card */}
+           <Card className={`relative ${!isCommitPhase ? "opacity-50 grayscale" : "border-blue-500/50 shadow-blue-900/20"}`}>
+              {!isCommitPhase && <div className="absolute inset-0 z-10 bg-slate-950/50 backdrop-blur-[1px] rounded-2xl flex items-center justify-center font-bold text-slate-400">PHASE CLOSED</div>}
+              <CardHeader>
+                 <CardTitle className="text-blue-400">1. Commit Bid</CardTitle>
+                 <p className="text-xs text-slate-400">Submit a hidden bid hash to the blockchain.</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                 <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-slate-400">Your Bid (USDT)</label>
+                    <Input 
+                      placeholder="e.g. 5.5" 
+                      value={bidAmount} 
+                      onChange={e => setBidAmount(e.target.value)} 
+                      disabled={!isCommitPhase}
+                      className="font-mono text-lg"
+                    />
+                 </div>
+                 <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-slate-400">Secret Salt</label>
+                    <Input 
+                      placeholder="Random secret..." 
+                      value={salt} 
+                      onChange={e => setSalt(e.target.value)} 
+                      disabled={!isCommitPhase}
+                      type="password"
+                    />
+                    <p className="text-[10px] text-slate-500">Keep this secret! You need it to reveal later.</p>
+                 </div>
+                 <Button 
+                   disabled={!isCommitPhase || !!busy || !bidAmount || !salt}
+                   onClick={async () => {
+                      if(!circle.contract_address) return;
+                      setBusy("Committing...");
+                      try {
+                         await publishBid(auth.token, { circle_id: circleId, bid_amount: bidAmount, salt });
+                         const payload = await buildCommitBidPayload(bidAmount, salt);
+                         await sendTransaction({
+                           validUntil: Math.floor(Date.now()/1000)+300,
+                           messages: [{ address: circle.contract_address, amount: toNano("0.05"), payload }]
+                         });
+                         refresh();
+                      } catch(e: any) { setError({code:"TX", message: e.message}); } 
+                      finally { setBusy(null); }
+                   }}
+                 >
+                   Commit Bid (On-Chain)
+                 </Button>
+              </CardContent>
+           </Card>
 
-              <div className="rounded-xl bg-slate-950/40 p-3 ring-1 ring-slate-800 text-slate-300">
-                In each cycle, one member receives the pot.
-                <br />
-                You place a blind bid by entering <span className="font-semibold">“How much do you want to receive?”</span>
-                <br />
-                The person willing to receive the least wins the cycle.
-                <br />
-                The difference becomes credits for other members (reduces their next payment).
-              </div>
+           {/* Reveal Card */}
+           <Card className={`relative ${!isRevealPhase ? "opacity-50 grayscale" : "border-emerald-500/50 shadow-emerald-900/20"}`}>
+              {!isRevealPhase && <div className="absolute inset-0 z-10 bg-slate-950/50 backdrop-blur-[1px] rounded-2xl flex items-center justify-center font-bold text-slate-400">
+                 {now < commitEnd ? "WAIT FOR REVEAL PHASE" : "PHASE CLOSED"}
+              </div>}
+              <CardHeader>
+                 <CardTitle className="text-emerald-400">2. Reveal Bid</CardTitle>
+                 <p className="text-xs text-slate-400">Publicly reveal your bid to win the pot.</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                 <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-slate-400">Re-enter Bid</label>
+                    <Input 
+                      placeholder="Must match commit" 
+                      value={bidAmount} 
+                      onChange={e => setBidAmount(e.target.value)} 
+                      disabled={!isRevealPhase}
+                    />
+                 </div>
+                 <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-slate-400">Re-enter Salt</label>
+                    <Input 
+                      placeholder="Must match commit" 
+                      value={salt} 
+                      onChange={e => setSalt(e.target.value)} 
+                      disabled={!isRevealPhase}
+                      type="password"
+                    />
+                 </div>
+                 <Button 
+                   variant="success"
+                   disabled={!isRevealPhase || !!busy || !bidAmount || !salt}
+                   onClick={async () => {
+                      if(!circle.contract_address) return;
+                      setBusy("Revealing...");
+                      try {
+                         const payload = await buildRevealBidPayload(bidAmount, salt);
+                         await sendTransaction({
+                           validUntil: Math.floor(Date.now()/1000)+300,
+                           messages: [{ address: circle.contract_address, amount: toNano("0.05"), payload }]
+                         });
+                         refresh();
+                      } catch(e: any) { setError({code:"TX", message: e.message}); } 
+                      finally { setBusy(null); }
+                   }}
+                 >
+                   Reveal Bid (On-Chain)
+                 </Button>
+              </CardContent>
+           </Card>
+        </div>
 
-              {stage === "commit" ? (
-                <>
-                  {cannotBid ? (
-                    <div className="text-sm text-slate-300">
-                      You already won a previous cycle. In MVP, each member can win at most once.
-                    </div>
-                  ) : null}
-                  <div className="text-sm text-slate-300">
-                    Minimum: {formatUsdt(minPayout)} · Maximum: {formatUsdt(pot)}
-                  </div>
-                  <Input value={payout} onChange={(e) => setPayout(e.target.value)} placeholder="How much do you want to receive? (USDT)" inputMode="decimal" />
-                  <Button onClick={onCommit} disabled={!tonConnectUI.connected || cannotBid}>
-                    Commit Bid
-                  </Button>
-                </>
-              ) : null}
-
-              {stage === "reveal" ? (
-                <Button onClick={onReveal} disabled={!tonConnectUI.connected}>
-                  Reveal Bid
-                </Button>
-              ) : null}
-
-              {stage === "closed" ? <div className="text-slate-300">Auction window is closed.</div> : null}
-            </div>
-          </Card>
-        )}
-
-        {circle ? <OnChainScheduleCard circle={circle} /> : null}
-
-        {error && humanError ? (
-          <Card>
-            <CardTitle>{humanError.title}</CardTitle>
-            <CardDescription>
-              {humanError.description}
-              <div className="mt-2 text-xs text-slate-500">Code: {error.code}</div>
-            </CardDescription>
-          </Card>
-        ) : null}
+        {error && <div className="text-red-400 text-center bg-red-950/20 p-2 rounded">{error.message}</div>}
+        {busy && <div className="text-center text-blue-400 animate-pulse">{busy}</div>}
       </div>
     </Page>
   );

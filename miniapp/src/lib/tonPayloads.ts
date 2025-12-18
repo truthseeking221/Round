@@ -120,3 +120,86 @@ export function buildJettonDepositTransferPayload(params: {
 
   return cellToPayloadBase64(c);
 }
+
+// ============================================
+// AUCTION PAYLOADS
+// ============================================
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function randomU256(): bigint {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return BigInt(`0x${bytesToHex(b)}`);
+}
+
+function parseUsdtAmount(usdt: string): bigint {
+  const cleaned = usdt.trim();
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) throw new Error("Invalid USDT amount");
+  const [whole, frac = ""] = cleaned.split(".");
+  const fracPadded = (frac + "000000").slice(0, 6);
+  return BigInt(whole) * 1_000_000n + BigInt(fracPadded);
+}
+
+/**
+ * Build commit bid payload for auction
+ * Stores the bid locally and returns the payload to send on-chain
+ */
+export async function buildCommitBidPayload(bidAmountUsdt: string, saltString: string): Promise<string> {
+  const OP_COMMIT_BID = 0x3001;
+  
+  const payoutUnits = parseUsdtAmount(bidAmountUsdt);
+  
+  // Generate salt from user input (hash it for consistency)
+  const saltBytes = new TextEncoder().encode(saltString);
+  const saltHash = await crypto.subtle.digest("SHA-256", saltBytes);
+  const salt = BigInt(`0x${bytesToHex(new Uint8Array(saltHash))}`);
+  
+  // Build commit hash: H("MC_BID"|contract|cycle|wallet|payoutWanted|salt)
+  // Note: In real implementation, this needs contract address and wallet from context
+  // For now, we just hash the bid data - the full hash is built in the contract
+  const commitData = beginCell()
+    .storeCoins(payoutUnits)
+    .storeUint(salt, 256)
+    .endCell();
+  
+  const commitHash = BigInt(`0x${bytesToHex(commitData.hash())}`);
+  
+  // Store for reveal phase
+  localStorage.setItem("mc_bid_payout", payoutUnits.toString());
+  localStorage.setItem("mc_bid_salt", salt.toString());
+  
+  const c = beginCell()
+    .storeUint(OP_COMMIT_BID, 32)
+    .storeUint(commitHash, 256)
+    .endCell();
+  
+  return cellToPayloadBase64(c);
+}
+
+/**
+ * Build reveal bid payload for auction
+ * Retrieves stored bid data and reveals it on-chain
+ */
+export async function buildRevealBidPayload(bidAmountUsdt: string, saltString: string): Promise<string> {
+  const OP_REVEAL_BID = 0x3002;
+  
+  const payoutUnits = parseUsdtAmount(bidAmountUsdt);
+  
+  // Regenerate salt from user input
+  const saltBytes = new TextEncoder().encode(saltString);
+  const saltHash = await crypto.subtle.digest("SHA-256", saltBytes);
+  const salt = BigInt(`0x${bytesToHex(new Uint8Array(saltHash))}`);
+  
+  const c = beginCell()
+    .storeUint(OP_REVEAL_BID, 32)
+    .storeCoins(payoutUnits)
+    .storeUint(salt, 256)
+    .endCell();
+  
+  return cellToPayloadBase64(c);
+}

@@ -1,15 +1,11 @@
 import { useMemo, useState } from "react";
 
 import { useAuth } from "./useAuth";
-
-function ErrorPanel(props: { code: string; message?: string }) {
-  return (
-    <div style={{ border: "1px solid rgba(255,255,255,0.2)", padding: 12, borderRadius: 12, textAlign: "left" }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Error: {props.code}</div>
-      {props.message ? <div style={{ opacity: 0.9 }}>{props.message}</div> : null}
-    </div>
-  );
-}
+import { describeError } from "../lib/errors";
+import { Page, LoadingState } from "../components/layout/Page";
+import { AlertCard, Card, CardContent, CardHeader, CardTitle } from "../components/ui/Card";
+import { Textarea } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
 
 export function AuthGate(props: { children: React.ReactNode }) {
   const auth = useAuth();
@@ -20,40 +16,67 @@ export function AuthGate(props: { children: React.ReactNode }) {
   }, [auth.status, auth.error]);
 
   if (auth.status === "loading") {
-    return <div style={{ padding: 16, textAlign: "left" }}>Loading…</div>;
+    return (
+      <Page title="MoneyCircle" subtitle="Secure rotating savings on TON" showHeader={false} maxWidth="md">
+        <div className="pt-6">
+          <LoadingState message="Authenticating…" />
+        </div>
+      </Page>
+    );
   }
 
   if (auth.status === "error") {
-    return (
-      <div style={{ padding: 16, textAlign: "left", display: "grid", gap: 12 }}>
-        <ErrorPanel code={auth.error.code} message={auth.error.message} />
+    const human = describeError(auth.error);
 
-        {showDevInit ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontWeight: 700 }}>Local dev</div>
-            <div style={{ fontSize: 13, opacity: 0.85 }}>
-              Paste Telegram WebApp <code>initData</code> to continue, or set <code>VITE_DEV_INIT_DATA</code>.
-            </div>
-            <textarea
-              rows={4}
-              value={manualInitData}
-              onChange={(e) => setManualInitData(e.target.value)}
-              placeholder="query_id=...&user=...&auth_date=...&hash=..."
-              style={{ width: "100%", padding: 10, borderRadius: 10 }}
-            />
-            <button
-              onClick={() => {
-                auth.setDevInitData(manualInitData);
-                void auth.refresh();
-              }}
-            >
-              Authenticate
-            </button>
-          </div>
-        ) : (
-          <button onClick={() => void auth.refresh()}>Retry</button>
-        )}
-      </div>
+    return (
+      <Page title="Authentication" subtitle="Connect via Telegram to continue" showHeader={false} maxWidth="md">
+        <div className="space-y-4 pt-4">
+          <AlertCard variant="error" title={human.title}>
+            {human.description}
+            <div className="mt-2 text-xs text-slate-500">Code: {auth.error.code}</div>
+          </AlertCard>
+
+          {showDevInit ? (
+            <Card className="border-slate-800/60 bg-slate-900/50">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Local development</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="text-sm text-slate-300">
+                  Paste Telegram WebApp <span className="font-mono">initData</span> to authenticate, or set{" "}
+                  <span className="font-mono">VITE_DEV_INIT_DATA</span>.
+                </div>
+                <Textarea
+                  rows={5}
+                  value={manualInitData}
+                  onChange={(e) => setManualInitData(e.target.value)}
+                  placeholder="query_id=...&user=...&auth_date=...&hash=..."
+                  className="font-mono text-xs"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    className="flex-1"
+                    onClick={() => {
+                      auth.setDevInitData(manualInitData);
+                      void auth.refresh();
+                    }}
+                    disabled={manualInitData.trim().length === 0}
+                  >
+                    Authenticate
+                  </Button>
+                  <Button variant="secondary" onClick={() => void auth.refresh()}>
+                    Retry
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Button onClick={() => void auth.refresh()} className="w-full">
+              Retry
+            </Button>
+          )}
+        </div>
+      </Page>
     );
   }
 

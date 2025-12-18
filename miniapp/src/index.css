@@ -1,20 +1,342 @@
 @import "tailwindcss";
 
+/* ============================================
+   MONEYCIRCLE - Professional Fintech Design System
+   Theme: "Secure Vault" - Trust, Safety, Transparency
+   ============================================ */
+
 :root {
   color-scheme: dark;
+  
+  /* Typography */
+  --font-display: "Inter", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", monospace;
+  
+  /* Core Colors - Trust & Security Palette */
+  --color-bg-base: #030712;      /* Gray 950 - Deep foundation */
+  --color-bg-elevated: #0f172a;  /* Slate 900 - Cards */
+  --color-bg-subtle: #1e293b;    /* Slate 800 - Hover states */
+  
+  /* Brand Colors */
+  --color-primary: #3b82f6;      /* Blue 500 - Trust, Action */
+  --color-primary-hover: #60a5fa; /* Blue 400 */
+  --color-primary-muted: #1e3a5f; /* Blue muted bg */
+  
+  /* Status Colors */
+  --color-success: #10b981;      /* Emerald 500 - Safe, Active */
+  --color-success-muted: #064e3b; /* Emerald 900 */
+  --color-warning: #f59e0b;      /* Amber 500 - Attention */
+  --color-warning-muted: #78350f; /* Amber 900 */
+  --color-danger: #ef4444;       /* Red 500 - Alert, Exit */
+  --color-danger-muted: #7f1d1d; /* Red 900 */
+  
+  /* Text Colors */
+  --color-text-primary: #f8fafc;   /* Slate 50 */
+  --color-text-secondary: #94a3b8; /* Slate 400 */
+  --color-text-muted: #64748b;     /* Slate 500 */
+  --color-text-disabled: #475569;  /* Slate 600 */
+  
+  /* Borders */
+  --color-border: #1e293b;         /* Slate 800 */
+  --color-border-subtle: #334155;  /* Slate 700 */
+  --color-border-focus: #3b82f6;   /* Blue 500 */
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.3);
+  --shadow-glow-primary: 0 0 20px -5px rgba(59, 130, 246, 0.4);
+  --shadow-glow-success: 0 0 20px -5px rgba(16, 185, 129, 0.4);
 }
 
-html,
-body {
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+html, body {
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
-  background: #0b1220;
-  color: #f8fafc;
+  background: var(--color-bg-base);
+  background-image: 
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(16, 185, 129, 0.04) 0%, transparent 50%);
+  background-attachment: fixed;
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  box-sizing: border-box;
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+/* ============================================
+   CUSTOM COMPONENT CLASSES (Pure CSS, no @apply nesting)
+   ============================================ */
+
+/* Card Styles */
+.card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+}
+
+.card-elevated {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.card-interactive {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  transition: all 0.2s ease;
+}
+
+.card-interactive:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: var(--shadow-lg), var(--shadow-glow-primary);
+}
+
+/* Vault-style secure card */
+.vault-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(15, 23, 42, 0.92) 100%);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.vault-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.3) 50%, transparent 100%);
+}
+
+/* Number Typography */
+.font-mono-safe {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.02em;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Status Indicators */
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.status-dot-active {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 8px currentColor;
+  background-color: #10b981;
+}
+
+.status-dot-pending {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 8px currentColor;
+  background-color: #f59e0b;
+}
+
+.status-dot-error {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 8px currentColor;
+  background-color: #ef4444;
+}
+
+/* Safe Zone Indicator */
+.safe-zone {
+  position: relative;
+}
+
+.safe-zone::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.2) 0%, transparent 50%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Secure Badge */
+.secure-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+/* Glass morphism */
+.glass {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Gradient Text */
+.text-gradient-primary {
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-success {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Divider */
+.divider {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(51, 65, 85, 0.5) 20%, rgba(51, 65, 85, 0.5) 80%, transparent 100%);
+}
+
+/* Focus Ring */
+.focus-ring {
+  outline: none;
+}
+
+.focus-ring:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-bg-base), 0 0 0 4px var(--color-border-focus);
+}
+
+/* Animation Classes */
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 2s ease-in-out infinite;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0; 
+    transform: translateY(8px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ============================================
+   COMPONENT OVERRIDES
+   ============================================ */
+
+/* TonConnect Button Override */
+[data-tc-button] {
+  font-family: var(--font-body) !important;
+  border-radius: 12px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+
+/* Selection */
+::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: #fff;
+}
+
+/* Safe area padding for mobile */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.pb-dock {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);
+}
+
+.h-safe {
+  height: env(safe-area-inset-bottom, 0);
 }
