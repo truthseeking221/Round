@@ -7,12 +7,13 @@ import type { ApiError, CircleStatusResponse } from "../lib/api";
 import { getCircleStatus } from "../lib/api";
 import { useAuth } from "../auth/useAuth";
 import { useSmartWallet } from "../hooks/useSmartWallet"; // Replaced
-import { buildInitJettonWalletPayload, buildWithdrawPayload, toNano } from "../lib/tonPayloads";
+import { buildWithdrawPayload, toNano } from "../lib/tonPayloads";
+import { cn } from "../lib/cn";
 import { Page } from "../components/layout/Page";
 import { FundsBanner } from "../components/mc/FundsBanner";
 import { IndexerLagBanner } from "../components/mc/IndexerLagBanner";
 import { Button } from "../components/ui/Button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
+import { AlertCard, Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { formatUsdt } from "../lib/usdt";
 import { describeError } from "../lib/errors";
 
@@ -148,40 +149,84 @@ export function WithdrawPage() {
     }
   };
 
+  const primaryAction = useMemo(() => {
+    if (!member || !circle) return null;
+    if (allowed.includes(1)) {
+      return { label: `Withdraw Now (${formatUsdt(toBigIntSafe(member.withdrawable))})`, variant: "default" as const, mode: 1 as WithdrawMode };
+    }
+    if (allowed.includes(2)) {
+      return { label: "Withdraw All Funds", variant: "secondary" as const, mode: 2 as WithdrawMode };
+    }
+    if (allowed.includes(3)) {
+      return { label: "Exit Circle & Refund", variant: "danger" as const, mode: 3 as WithdrawMode };
+    }
+    return null;
+  }, [allowed, circle, member]);
+
   return (
-    <Page title="Withdraw Funds">
+    <Page
+      title="Withdraw"
+      subtitle={circle?.name ?? "Withdrawal & refunds"}
+      leading={
+        <Link
+          to={`/circle/${circleId}`}
+          className={cn(
+            "inline-flex items-center justify-center h-10 w-10 rounded-xl",
+            "border border-slate-800/60 bg-slate-950/40 text-slate-300",
+            "hover:bg-slate-900/60 hover:text-slate-100 transition-colors"
+          )}
+          aria-label="Back to circle"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+      }
+      headerAction={
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void refresh()}
+            disabled={!!busy}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </Button>
+          <TonConnectButton className="scale-90 origin-right" />
+        </div>
+      }
+      bottomDock={
+        primaryAction ? (
+          <Button
+            variant={primaryAction.variant}
+            disabled={!!busy}
+            onClick={() => void doWithdraw(primaryAction.mode)}
+            className="w-full h-12 text-base"
+          >
+            {primaryAction.label}
+          </Button>
+        ) : null
+      }
+    >
       <div className="space-y-6">
         <FundsBanner />
         <IndexerLagBanner circle={circle} />
 
-        <div className="flex items-center justify-between">
-          <Link to={`/circle/${circleId}`} className="text-sm text-slate-400 hover:text-slate-100 flex items-center gap-1">
-             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
-            </svg>
-            Back to Circle
-          </Link>
-          <TonConnectButton className="scale-90 origin-right" />
-        </div>
-
         {error && humanError ? (
-          <Card className="border-red-900/50 bg-red-950/20">
-            <CardContent>
-               <h3 className="text-red-400 font-bold mb-1">{humanError.title}</h3>
-               <p className="text-red-200/70 text-sm">{humanError.description}</p>
-            </CardContent>
-          </Card>
+          <AlertCard variant="error" title={humanError.title}>
+            {humanError.description}
+            <div className="mt-2 text-xs text-slate-500">Code: {error.code}</div>
+          </AlertCard>
         ) : null}
 
         {busy && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm text-white font-display text-xl animate-pulse">{busy}</div>}
 
         {member && circle ? (
           <>
-            <div className="text-center mb-6">
-               <h2 className="text-2xl font-display font-bold text-slate-50">{circle.name}</h2>
-               <div className="text-slate-500 text-sm">Withdrawal & Refunds</div>
-            </div>
-
             <Card className="bg-slate-900/80 border-blue-500/20">
               <CardHeader className="border-b border-slate-800/50 pb-4">
                 <CardTitle className="flex items-center justify-between">
@@ -204,33 +249,18 @@ export function WithdrawPage() {
                     </div>
                  </div>
 
-                 <div className="pt-4 space-y-3">
-                   {allowed.length === 0 ? (
-                      <div className="p-4 bg-slate-800/50 rounded-lg text-center text-slate-400 text-sm">
-                        No actions available. <br/> Check circle status or your balance.
-                      </div>
-                   ) : (
-                     <>
-                        {allowed.includes(1) && (
-                          <Button onClick={() => void doWithdraw(1)} disabled={!!busy} className="w-full py-6 text-lg shadow-lg shadow-emerald-900/20" variant="default">
-                            Withdraw Available ({formatUsdt(toBigIntSafe(member.withdrawable))})
-                          </Button>
-                        )}
-                        
-                        {allowed.includes(2) && (
-                          <Button onClick={() => void doWithdraw(2)} disabled={!!busy} className="w-full" variant="secondary">
-                            Withdraw All Funds (Settlement)
-                          </Button>
-                        )}
-
-                        {allowed.includes(3) && (
-                          <Button variant="danger" onClick={() => void doWithdraw(3)} disabled={!!busy} className="w-full">
-                            Exit Circle & Refund Deposits
-                          </Button>
-                        )}
-                     </>
-                   )}
-                 </div>
+                 {allowed.length === 0 ? (
+                   <div className="pt-4">
+                     <div className="p-4 bg-slate-800/40 rounded-xl text-center text-slate-300 text-sm">
+                       No actions available right now.
+                       <div className="mt-1 text-xs text-slate-500">Check circle status or your balance, then refresh.</div>
+                     </div>
+                   </div>
+                 ) : (
+                   <div className="pt-2 text-xs text-slate-500">
+                     Action ready. Use the button docked at the bottom of the screen.
+                   </div>
+                 )}
               </CardContent>
             </Card>
 

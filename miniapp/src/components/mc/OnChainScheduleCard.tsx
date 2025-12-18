@@ -91,10 +91,11 @@ interface OnChainScheduleCardProps {
     onchain_funded_count?: number | null;
     n_members?: number;
   };
+  nowMs?: number;
 }
 
-export function OnChainScheduleCard({ circle }: OnChainScheduleCardProps) {
-  const now = Date.now();
+export function OnChainScheduleCard({ circle, nowMs }: OnChainScheduleCardProps) {
+  const now = nowMs ?? 0;
 
   const getStatus = (timeStr?: string | null, nextTimeStr?: string | null) => {
     if (!timeStr) return { isPast: false, isActive: false, isNext: false };

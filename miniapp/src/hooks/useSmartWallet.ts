@@ -1,7 +1,7 @@
 import { useTonConnectUI, useTonWallet } from "@tonconnect/ui-react";
 import type { SendTransactionRequest, Wallet } from "@tonconnect/ui-react";
+import { CHAIN } from "@tonconnect/sdk";
 import { env } from "../lib/env";
-import { useState } from "react";
 
 // Mock Wallet Object matching the shape needed by the app
 const MOCK_WALLET_ADDRESS = "0:1234567890123456789012345678901234567890123456789012345678901234"; // EQ... format in raw
@@ -10,7 +10,7 @@ const MOCK_WALLET_USER_FRIENDLY = "EQD__________________________________________
 const mockWallet: Wallet = {
   account: {
     address: MOCK_WALLET_ADDRESS,
-    chain: "-239",
+    chain: CHAIN.MAINNET,
     walletStateInit: "",
     publicKey: "mock_pub_key"
   },
@@ -18,9 +18,10 @@ const mockWallet: Wallet = {
     appName: "MockWallet",
     appVersion: "1.0.0",
     platform: "browser",
+    maxProtocolVersion: 2,
     features: ["SendTransaction"]
   },
-  provider: "mock",
+  provider: "injected",
   connectItems: {
     tonProof: { name: "ton_proof", proof: { timestamp: 123, domain: { lengthBytes: 0, value: "" }, signature: "", payload: "" } }
   }
@@ -31,7 +32,8 @@ export function useSmartWallet() {
   const [tonConnectUI] = useTonConnectUI();
   
   // State to simulate "connecting" the mock wallet (optional, for now strictly auto-connect in dev)
-  const isMockMode = env.IS_MOCK;
+  // IMPORTANT: Mock mode must be explicitly enabled via VITE_ENABLE_MOCK=true
+  const isMockMode = env.ENABLE_MOCK;
 
   // Use Real Wallet if connected, otherwise fallback to Mock if in Mock Mode
   const wallet = realWallet || (isMockMode ? mockWallet : null);

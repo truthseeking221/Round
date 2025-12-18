@@ -1,3 +1,4 @@
+import { TonConnectButton } from "@tonconnect/ui-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -7,7 +8,7 @@ import { useAuth } from "../auth/useAuth";
 import { useSmartWallet } from "../hooks/useSmartWallet"; // Replaced
 import { Page } from "../components/layout/Page";
 import { Button } from "../components/ui/Button";
-import { Card, CardContent } from "../components/ui/Card";
+import { AlertCard, Card, CardContent } from "../components/ui/Card";
 import { formatUsdt } from "../lib/usdt";
 import { FundsBanner } from "../components/mc/FundsBanner";
 
@@ -22,17 +23,20 @@ export function JoinPage() {
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<boolean>(false);
+  const [accepted, setAccepted] = useState<boolean>(false);
 
   useEffect(() => {
     if (auth.status !== "ready") return;
     setLoading(true);
-    getCircleStatus(auth.token, circleId)
+    const token = auth.token;
+    getCircleStatus(token, circleId)
       .then(setData)
       .catch(e => setError({ code: "API", message: e.message }))
       .finally(() => setLoading(false));
   }, [auth.status, circleId, auth.token]);
 
   const handleJoin = async () => {
+    if (auth.status !== "ready") return;
     if (!wallet) return; // Should handle not connected state UI
     setBusy(true);
     try {
@@ -49,8 +53,9 @@ export function JoinPage() {
       // Let's stick to Real API signature in the UI code.
       
       navigate(`/circle/${circleId}`);
-    } catch (e: any) {
-      setError({ code: "JOIN_FAILED", message: e.message });
+    } catch (e: unknown) {
+      const maybe = (e ?? {}) as { message?: unknown };
+      setError({ code: "JOIN_FAILED", message: typeof maybe.message === "string" ? maybe.message : "Join failed." });
     } finally {
       setBusy(false);
     }
@@ -59,16 +64,24 @@ export function JoinPage() {
   const circle = data?.circle;
 
   return (
-    <Page title="Join Circle">
+    <Page
+      title="Join Circle"
+      subtitle={circle?.name ?? "Invitation"}
+      leading={
+        <Link
+          to={`/circle/${circleId}`}
+          className="inline-flex items-center justify-center h-10 w-10 rounded-xl border border-slate-800/60 bg-slate-950/40 text-slate-300 hover:bg-slate-900/60 hover:text-slate-100 transition-colors"
+          aria-label="Back to circle"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+      }
+      headerAction={<TonConnectButton className="scale-90 origin-right" />}
+    >
       <div className="space-y-6 relative z-10">
         <FundsBanner />
-        
-        <Link to="/" className="text-sm text-slate-400 hover:text-slate-100 flex items-center gap-1 w-fit">
-           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-            <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
-          </svg>
-          Decline & Back
-        </Link>
 
         {loading && <div className="text-center py-12 text-slate-500 animate-pulse">Fetching Invitation...</div>}
         
@@ -102,23 +115,47 @@ export function JoinPage() {
                     <div className="space-y-4">
                        {!connected ? (
                           <div className="p-4 bg-slate-900 rounded-xl border border-dashed border-slate-700 text-slate-400 text-sm">
-                             Please connect your wallet (or use Mock Mode) to accept this invitation.
+                             Connect your wallet to accept this invitation.
                           </div>
                        ) : (
                           <Button 
                             onClick={handleJoin} 
                             loading={busy} 
-                            disabled={busy} 
+                            disabled={busy || !accepted} 
                             size="lg" 
                             className="w-full text-lg h-14 shadow-xl shadow-blue-500/20"
                           >
-                            Sign & Join Circle
+                            Join Circle
                           </Button>
                        )}
+
+                       <label className="flex items-start gap-2 text-sm text-slate-300 text-left">
+                         <input
+                           type="checkbox"
+                           className="mt-0.5 accent-blue-500"
+                           checked={accepted}
+                           onChange={(e) => setAccepted(e.target.checked)}
+                         />
+                         <span>I understand and accept the rules.</span>
+                       </label>
+
+                       <div className="rounded-xl bg-slate-950/40 border border-slate-800/60 p-4 text-left">
+                         <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">
+                           15-second explanation
+                         </div>
+                         <div className="text-sm text-slate-300 leading-relaxed">
+                           In each cycle, one member receives the pot. You place a blind bid by entering{" "}
+                           <span className="text-slate-100 font-medium">how much you want to receive</span>. The person
+                           willing to receive the least wins the cycle. The difference becomes credits for other members
+                           (reduces their next payment).
+                         </div>
+                       </div>
                        
-                       {error && (
-                         <div className="text-red-400 text-sm bg-red-950/20 p-2 rounded">{error.message}</div>
-                       )}
+                       {error ? (
+                         <AlertCard variant="error" title="Join failed">
+                           {error.message}
+                         </AlertCard>
+                       ) : null}
 
                        <p className="text-xs text-slate-500 px-4">
                          By joining, you agree to the smart contract rules. You must deposit collateral before the circle starts.

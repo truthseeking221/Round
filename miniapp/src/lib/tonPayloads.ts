@@ -131,12 +131,6 @@ function bytesToHex(bytes: Uint8Array): string {
     .join("");
 }
 
-function randomU256(): bigint {
-  const b = new Uint8Array(32);
-  crypto.getRandomValues(b);
-  return BigInt(`0x${bytesToHex(b)}`);
-}
-
 function parseUsdtAmount(usdt: string): bigint {
   const cleaned = usdt.trim();
   if (!/^\d+(\.\d+)?$/.test(cleaned)) throw new Error("Invalid USDT amount");
@@ -146,54 +140,159 @@ function parseUsdtAmount(usdt: string): bigint {
 }
 
 /**
- * Build commit bid payload for auction
- * Stores the bid locally and returns the payload to send on-chain
+ * Build domain-separated commit hash matching contract's _hashBid:
+ * H("MC_BID"|contract|cycle|wallet|payoutWanted|salt)
+ * 
+ * CRITICAL: This must match the contract exactly or reveal will fail with HASH_MISMATCH
+ * and user will be penalized (lose collateral).
  */
-export async function buildCommitBidPayload(bidAmountUsdt: string, saltString: string): Promise<string> {
+function buildBidCommitHash(params: {
+  contractAddress: string;
+  cycleIndex: number;
+  walletAddress: string;
+  payoutWantedUnits: bigint;
+  salt: bigint;
+}): bigint {
+  const hash = beginCell()
+    .storeUint(0x4d43, 16) // "MC"
+    .storeUint(0x5f424944, 32) // "_BID"
+    .storeAddress(Address.parse(params.contractAddress))
+    .storeUint(params.cycleIndex, 16)
+    .storeAddress(Address.parse(params.walletAddress))
+    .storeCoins(params.payoutWantedUnits)
+    .storeUint(params.salt, 256)
+    .endCell()
+    .hash();
+  return BigInt(`0x${bytesToHex(hash)}`);
+}
+
+export type BidParams = {
+  bidAmountUsdt: string;
+  saltString: string;
+  contractAddress: string;
+  cycleIndex: number;
+  walletAddress: string;
+};
+
+type RevealFromStorageParams = { fromStorage: true };
+
+function isRevealFromStorage(params: BidParams | RevealFromStorageParams): params is RevealFromStorageParams {
+  return (params as RevealFromStorageParams).fromStorage === true;
+}
+
+/**
+ * Build commit bid payload for auction
+ * 
+ * IMPORTANT: All parameters are REQUIRED for correct domain-separated hash.
+ * Using incorrect params will cause reveal to fail and user loses collateral.
+ * 
+ * @param params.bidAmountUsdt - The payout amount user wants (in USDT, e.g. "95.50")
+ * @param params.saltString - User's secret salt string
+ * @param params.contractAddress - Circle contract address (EQ...)
+ * @param params.cycleIndex - Current cycle index from contract state
+ * @param params.walletAddress - User's TON wallet address (EQ...)
+ */
+export async function buildCommitBidPayload(params: BidParams): Promise<{ payload: string; salt: bigint; payoutUnits: bigint }> {
   const OP_COMMIT_BID = 0x3001;
   
-  const payoutUnits = parseUsdtAmount(bidAmountUsdt);
+  const payoutUnits = parseUsdtAmount(params.bidAmountUsdt);
   
-  // Generate salt from user input (hash it for consistency)
-  const saltBytes = new TextEncoder().encode(saltString);
+  // Generate salt from user input (hash it for consistency and to get 256-bit value)
+  const saltBytes = new TextEncoder().encode(params.saltString);
   const saltHash = await crypto.subtle.digest("SHA-256", saltBytes);
   const salt = BigInt(`0x${bytesToHex(new Uint8Array(saltHash))}`);
   
-  // Build commit hash: H("MC_BID"|contract|cycle|wallet|payoutWanted|salt)
-  // Note: In real implementation, this needs contract address and wallet from context
-  // For now, we just hash the bid data - the full hash is built in the contract
-  const commitData = beginCell()
-    .storeCoins(payoutUnits)
-    .storeUint(salt, 256)
-    .endCell();
+  // Build commit hash with FULL domain separation - matches contract's _hashBid exactly
+  const commitHash = buildBidCommitHash({
+    contractAddress: params.contractAddress,
+    cycleIndex: params.cycleIndex,
+    walletAddress: params.walletAddress,
+    payoutWantedUnits: payoutUnits,
+    salt,
+  });
   
-  const commitHash = BigInt(`0x${bytesToHex(commitData.hash())}`);
-  
-  // Store for reveal phase
-  localStorage.setItem("mc_bid_payout", payoutUnits.toString());
-  localStorage.setItem("mc_bid_salt", salt.toString());
+  // Store for reveal phase (include all params for verification)
+  const storedBid = {
+    contractAddress: params.contractAddress,
+    cycleIndex: params.cycleIndex,
+    walletAddress: params.walletAddress,
+    payoutUnits: payoutUnits.toString(),
+    salt: salt.toString(),
+    commitHash: commitHash.toString(),
+    createdAt: Date.now(),
+  };
+  localStorage.setItem("mc_bid_data", JSON.stringify(storedBid));
   
   const c = beginCell()
     .storeUint(OP_COMMIT_BID, 32)
     .storeUint(commitHash, 256)
     .endCell();
   
-  return cellToPayloadBase64(c);
+  return {
+    payload: cellToPayloadBase64(c),
+    salt,
+    payoutUnits,
+  };
+}
+
+/**
+ * Get stored bid data for reveal phase
+ */
+export function getStoredBidData(): {
+  contractAddress: string;
+  cycleIndex: number;
+  walletAddress: string;
+  payoutUnits: bigint;
+  salt: bigint;
+  commitHash: bigint;
+} | null {
+  const stored = localStorage.getItem("mc_bid_data");
+  if (!stored) return null;
+  
+  try {
+    const data = JSON.parse(stored);
+    return {
+      contractAddress: data.contractAddress,
+      cycleIndex: data.cycleIndex,
+      walletAddress: data.walletAddress,
+      payoutUnits: BigInt(data.payoutUnits),
+      salt: BigInt(data.salt),
+      commitHash: BigInt(data.commitHash),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Build reveal bid payload for auction
- * Retrieves stored bid data and reveals it on-chain
+ * 
+ * Uses stored bid data to ensure consistency with commit.
+ * Also accepts explicit params for cases where user needs to re-enter.
  */
-export async function buildRevealBidPayload(bidAmountUsdt: string, saltString: string): Promise<string> {
+export async function buildRevealBidPayload(
+  params: BidParams | RevealFromStorageParams
+): Promise<{ payload: string; payoutUnits: bigint; salt: bigint }> {
   const OP_REVEAL_BID = 0x3002;
   
-  const payoutUnits = parseUsdtAmount(bidAmountUsdt);
+  let payoutUnits: bigint;
+  let salt: bigint;
   
-  // Regenerate salt from user input
-  const saltBytes = new TextEncoder().encode(saltString);
-  const saltHash = await crypto.subtle.digest("SHA-256", saltBytes);
-  const salt = BigInt(`0x${bytesToHex(new Uint8Array(saltHash))}`);
+  if (isRevealFromStorage(params)) {
+    // Use stored data
+    const stored = getStoredBidData();
+    if (!stored) {
+      throw new Error("NO_STORED_BID: No bid data found. Please re-enter your bid details.");
+    }
+    payoutUnits = stored.payoutUnits;
+    salt = stored.salt;
+  } else {
+    // Regenerate from params
+    payoutUnits = parseUsdtAmount(params.bidAmountUsdt);
+    const saltBytes = new TextEncoder().encode(params.saltString);
+    const saltHash = await crypto.subtle.digest("SHA-256", saltBytes);
+    salt = BigInt(`0x${bytesToHex(new Uint8Array(saltHash))}`);
+  }
   
   const c = beginCell()
     .storeUint(OP_REVEAL_BID, 32)
@@ -201,5 +300,16 @@ export async function buildRevealBidPayload(bidAmountUsdt: string, saltString: s
     .storeUint(salt, 256)
     .endCell();
   
-  return cellToPayloadBase64(c);
+  return {
+    payload: cellToPayloadBase64(c),
+    payoutUnits,
+    salt,
+  };
+}
+
+/**
+ * Clear stored bid data after successful reveal or cycle end
+ */
+export function clearStoredBidData(): void {
+  localStorage.removeItem("mc_bid_data");
 }

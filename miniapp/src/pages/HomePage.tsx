@@ -9,7 +9,8 @@ import { cn } from "../lib/cn";
 import { formatUsdt } from "../lib/usdt";
 import { Page, EmptyState, LoadingState } from "../components/layout/Page";
 import { Card, CardContent, AlertCard, StatCard } from "../components/ui/Card";
-import { Badge, getStatusBadgeVariant, SecureBadge } from "../components/ui/Badge";
+import { Badge, SecureBadge } from "../components/ui/Badge";
+import { getStatusBadgeVariant } from "../components/ui/badgeVariants";
 import { Button } from "../components/ui/Button";
 import { describeError } from "../lib/errors";
 

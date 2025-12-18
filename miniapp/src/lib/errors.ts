@@ -39,6 +39,8 @@ export function describeError(err: ApiError): HumanError {
       return { title: "Forbidden", description: "You do not have permission to perform this action." };
     case "SERVER_MISCONFIGURED":
       return { title: "Server unavailable", description: "The server is not configured correctly. Please try again later." };
+    case "APP_MISCONFIGURED":
+      return { title: "App misconfigured", description: err.message ?? "This mini app is not configured correctly. Please contact the admin." };
 
     case "RULES_NOT_ACCEPTED":
     case "RULES_SIGNATURE_REQUIRED":

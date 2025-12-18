@@ -14,12 +14,41 @@ function asApiError(e: unknown): ApiError {
   };
 }
 
+function makeMockReadyState(): AuthState {
+  return {
+    status: "ready",
+    token: "mock_token_dev",
+    user: {
+      telegram_user_id: 999999,
+      username: "dev_user",
+      first_name: "Developer",
+      last_name: "(Mock)",
+      photo_url: null,
+      language_code: "en"
+    },
+    group: {
+      group_chat_id: -100999,
+      title: "Dev Sandbox Group",
+      type: "supergroup",
+      bot_present: true,
+      bot_admin: true,
+      last_checked_at: new Date().toISOString()
+    },
+    error: null
+  };
+}
+
 export function AuthProvider(props: { children: React.ReactNode }) {
   const [devInitData, setDevInitData] = useState<string>(() => env.DEV_INIT_DATA);
   const [state, setState] = useState<AuthState>({ status: "loading", token: null, user: null, group: null, error: null });
 
-  // MOCK MODE: Bypass Telegram Auth check if environment is configured for mocks
-  const useMock = !env.FUNCTIONS_BASE_URL; // Consistent with api.ts logic
+  /**
+   * MOCK MODE: Now requires explicit opt-in via VITE_ENABLE_MOCK=true
+   * 
+   * Previously: mock mode was auto-enabled when FUNCTIONS_BASE_URL was missing.
+   * This was dangerous because it could ship fake auth to production.
+   */
+  const useMock = env.ENABLE_MOCK;
 
   useEffect(() => {
     initTelegramUi();
@@ -33,32 +62,29 @@ export function AuthProvider(props: { children: React.ReactNode }) {
       console.warn("[Auth] Mock Mode enabled. Logging in as fake user.");
       setTimeout(() => {
         if (cancelled) return;
-        setState({
-          status: "ready",
-          token: "mock_token_dev",
-          user: {
-            telegram_user_id: 999999,
-            username: "dev_user",
-            first_name: "Developer",
-            last_name: "(Mock)",
-            photo_url: null,
-            language_code: "en"
-          },
-          group: {
-            group_chat_id: -100999,
-            title: "Dev Sandbox Group",
-            type: "supergroup",
-            bot_present: true,
-            bot_admin: true,
-            last_checked_at: new Date().toISOString()
-          },
-          error: null
-        });
+        setState(makeMockReadyState());
       }, 500);
       return () => { cancelled = true; };
     }
 
     // --- REAL FLOW ---
+    if (!env.FUNCTIONS_BASE_URL) {
+      Promise.resolve().then(() => {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          token: null,
+          user: null,
+          group: null,
+          error: {
+            code: "APP_MISCONFIGURED",
+            message: "Missing VITE_FUNCTIONS_BASE_URL. Set it to your backend URL, or enable VITE_ENABLE_MOCK=true for local development."
+          }
+        });
+      });
+      return () => { cancelled = true; };
+    }
+
     const telegramInitData = getTelegramInitData();
     const initData = (telegramInitData && telegramInitData.trim()) || (env.DEV_INIT_DATA.trim() || null);
 
@@ -92,15 +118,26 @@ export function AuthProvider(props: { children: React.ReactNode }) {
   }, [useMock]);
 
   const refresh = useCallback(async () => {
-    setState({ status: "loading", token: null, user: null, group: null, error: null });
-
-    // Mock Refresh
     if (useMock) {
-      setTimeout(() => {
-        setState(prev => ({ ...prev, status: "ready" })); // Keep existing data
-      }, 500);
+      setState(makeMockReadyState());
       return;
     }
+
+    if (!env.FUNCTIONS_BASE_URL) {
+      setState({
+        status: "error",
+        token: null,
+        user: null,
+        group: null,
+        error: {
+          code: "APP_MISCONFIGURED",
+          message: "Missing VITE_FUNCTIONS_BASE_URL. Set it to your backend URL, or enable VITE_ENABLE_MOCK=true for local development."
+        }
+      });
+      return;
+    }
+
+    setState({ status: "loading", token: null, user: null, group: null, error: null });
 
     const telegramInitData = getTelegramInitData();
     const initData = (telegramInitData && telegramInitData.trim()) || (devInitData.trim() || null);

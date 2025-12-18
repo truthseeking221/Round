@@ -1,14 +1,18 @@
-import { useState } from "react";
+import { TonConnectButton } from "@tonconnect/ui-react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import type { ApiError } from "../lib/api";
 import { createCircle } from "../lib/api";
 import { useAuth } from "../auth/useAuth";
 import { useSmartWallet } from "../hooks/useSmartWallet"; // Replaced
+import { cn } from "../lib/cn";
 import { Page } from "../components/layout/Page";
 import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
+import { Input, Select } from "../components/ui/Input";
 import { Label } from "../components/ui/Label";
-import { Card, CardContent } from "../components/ui/Card";
+import { AlertCard, Card, CardContent, StatCard } from "../components/ui/Card";
+import { describeError } from "../lib/errors";
 
 export function CreateCirclePage() {
   const auth = useAuth();
@@ -18,26 +22,29 @@ export function CreateCirclePage() {
   const [name, setName] = useState("");
   const [contribution, setContribution] = useState(""); 
   const [members, setMembers] = useState("");
-  const [collateralRate, setCollateralRate] = useState("150");
+  const [interval, setInterval] = useState<"weekly" | "monthly">("monthly");
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const humanError = error ? describeError(error) : null;
 
-  const contVal = parseFloat(contribution) || 0;
-  const memVal = parseInt(members) || 0;
-  const colRateVal = parseFloat(collateralRate) || 0;
-  
-  const totalPot = contVal * memVal;
-  const collateralRequired = (totalPot * colRateVal) / 100;
+  const contVal = useMemo(() => Number.parseFloat(contribution) || 0, [contribution]);
+  const memVal = useMemo(() => Number.parseInt(members, 10) || 0, [members]);
+  const totalPot = useMemo(() => contVal * memVal, [contVal, memVal]);
+  const formValid = memVal >= 2 && memVal <= 12 && contVal > 0;
 
   const handleCreate = async () => {
-    // Check connected status from Smart Wallet (Mock is auto-connected)
-    if (!connected) {
-      setError("Please connect your wallet first.");
+    if (auth.status !== "ready") {
+      setError({ code: "AUTH_REQUIRED", message: "Authentication is not ready yet. Please retry." });
       return;
     }
-    if (contVal <= 0 || memVal < 2) {
-      setError("Invalid parameters (min 2 members, >0 contribution).");
+    // Check connected status from Smart Wallet (Mock is auto-connected)
+    if (!connected) {
+      setError({ code: "WALLET_NOT_CONNECTED", message: "Connect your wallet to create a circle." });
+      return;
+    }
+    if (!formValid) {
+      setError({ code: "INVALID_INPUT", message: "Invalid parameters (members 2–12, contribution > 0)." });
       return;
     }
 
@@ -46,36 +53,56 @@ export function CreateCirclePage() {
     try {
       const res = await createCircle(auth.token, {
         name: name.trim() || undefined,
-        contribution_units: String(contVal),
         n_members: memVal,
-        collateral_rate_bps: Math.round(colRateVal * 100),
+        contribution_usdt: String(contVal),
+        interval,
       });
-      navigate(`/circle/${res.circle_id}`);
-    } catch (e: any) {
-      setError(e.message || "Failed to create circle.");
+      navigate(`/circle/${res.circle.circle_id}`);
+    } catch (e: unknown) {
+      const maybe = (e ?? {}) as { code?: unknown; message?: unknown };
+      setError({
+        code: typeof maybe.code === "string" && maybe.code.length > 0 ? maybe.code : "API_ERROR",
+        message: typeof maybe.message === "string" && maybe.message.length > 0 ? maybe.message : "Failed to create circle.",
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Page title="New Circle">
-      <div className="space-y-6 max-w-lg mx-auto">
-        <div className="flex items-center justify-between">
-           <Link to="/" className="text-sm text-slate-400 hover:text-slate-100 flex items-center gap-1">
-             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
-            </svg>
-            Cancel
-           </Link>
-        </div>
-
-        <div className="text-center mb-6">
-           <h1 className="text-3xl font-display font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-             Create Money Circle
-           </h1>
-           <p className="text-slate-400 text-sm mt-2">Set up a trustless ROSCA on TON.</p>
-        </div>
+    <Page
+      title="Create Circle"
+      subtitle="Set up a trustless savings circle"
+      maxWidth="lg"
+      leading={
+        <Link
+          to="/"
+          className={cn(
+            "inline-flex items-center justify-center h-10 w-10 rounded-xl",
+            "border border-slate-800/60 bg-slate-950/40 text-slate-300",
+            "hover:bg-slate-900/60 hover:text-slate-100 transition-colors"
+          )}
+          aria-label="Back"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+      }
+      headerAction={<TonConnectButton className="scale-90 origin-right" />}
+    >
+      <div className="space-y-6">
+        <Card variant="vault" className="animate-slide-up">
+          <CardContent className="p-4">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Defaults</div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <StatCard label="Fees" value="1%" subValue="winner pays" />
+              <StatCard label="Grace" value="24h" subValue="late window" />
+              <StatCard label="Discount cap" value="5%" subValue="max" />
+              <StatCard label="Safety lock" value="On" subValue="cycle 1" />
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="border-slate-800 bg-slate-900/60 backdrop-blur-xl">
            <CardContent className="pt-6 space-y-5">
@@ -119,31 +146,17 @@ export function CreateCirclePage() {
                  </div>
               </div>
 
-              <div className="space-y-2 pt-2">
-                 <div className="flex justify-between">
-                    <Label htmlFor="colRate">Collateral Rate (%)</Label>
-                    <span className="text-xs font-mono text-emerald-400 font-bold">{collateralRate}%</span>
-                 </div>
-                 <div className="flex items-center gap-4">
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="200" 
-                      step="10" 
-                      value={collateralRate}
-                      onChange={e => setCollateralRate(e.target.value)}
-                      className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    />
-                    <Input 
-                       type="number" 
-                       value={collateralRate} 
-                       onChange={e => setCollateralRate(e.target.value)}
-                       className="w-20 text-center font-mono"
-                    />
-                 </div>
-                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                   Higher collateral ensures safety. Members must lock {collateralRate}% of the total pot value to join.
-                 </p>
+              <div className="space-y-2">
+                <Label htmlFor="interval">Interval</Label>
+                <Select
+                  id="interval"
+                  value={interval}
+                  onChange={(e) => setInterval(e.target.value as "weekly" | "monthly")}
+                  options={[
+                    { value: "weekly", label: "Weekly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
               </div>
 
               <div className="rounded-xl bg-slate-950 border border-slate-800 p-4 mt-6">
@@ -154,25 +167,26 @@ export function CreateCirclePage() {
                        <span className="text-slate-200 font-mono font-bold">{totalPot.toLocaleString()} USDT</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                       <span className="text-slate-400">Security Deposit Required</span>
-                       <span className="text-emerald-400 font-mono font-bold">{collateralRequired.toLocaleString()} USDT</span>
+                      <span className="text-slate-400">Interval</span>
+                      <span className="text-slate-200 font-mono font-bold">{interval === "weekly" ? "Weekly" : "Monthly"}</span>
                     </div>
                  </div>
               </div>
 
-              {error && (
-                <div className="p-3 bg-red-950/30 border border-red-900/50 rounded-lg text-red-300 text-sm text-center">
-                  {error}
-                </div>
-              )}
+              {error && humanError ? (
+                <AlertCard variant="error" title={humanError.title}>
+                  {humanError.description}
+                  <div className="mt-2 text-xs text-slate-500">Code: {error.code}</div>
+                </AlertCard>
+              ) : null}
 
               <Button 
                 onClick={handleCreate} 
                 loading={loading} 
-                disabled={loading || !name || contVal <= 0 || memVal < 2}
+                disabled={loading || !formValid}
                 className="w-full h-12 text-base shadow-xl shadow-blue-500/10"
               >
-                Launch Circle
+                Create Circle
               </Button>
 
            </CardContent>

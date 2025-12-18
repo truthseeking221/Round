@@ -2,11 +2,24 @@ import { env } from "./env";
 
 export type ApiError = { code: string; message?: string };
 
-// Mock mode: when FUNCTIONS_BASE_URL is not set, return mock data for UI preview
-const MOCK_MODE = !env.FUNCTIONS_BASE_URL;
+/**
+ * MOCK MODE: Now requires explicit opt-in via VITE_ENABLE_MOCK=true
+ * 
+ * This prevents accidentally shipping mock mode to production when
+ * VITE_FUNCTIONS_BASE_URL is forgotten.
+ */
+const MOCK_MODE = env.ENABLE_MOCK;
 
 if (MOCK_MODE) {
-  console.info("[API] Running in MOCK MODE - no backend connected. Set VITE_FUNCTIONS_BASE_URL to connect to real backend.");
+  console.info("[API] Running in MOCK MODE - no backend connected. This should only be used for local development.");
+}
+
+// Fail hard if no backend URL and not in mock mode
+if (!env.FUNCTIONS_BASE_URL && !MOCK_MODE) {
+  console.error(
+    "[API] FATAL: No backend URL configured and mock mode is disabled.\n" +
+    "Set VITE_FUNCTIONS_BASE_URL or enable VITE_ENABLE_MOCK=true for development."
+  );
 }
 
 async function apiFetch<T>(path: string, options: { method: string; token?: string; body?: unknown } = { method: "GET" }): Promise<T> {
@@ -37,6 +50,7 @@ async function apiFetch<T>(path: string, options: { method: string; token?: stri
 
 // Mock responses for local development
 function getMockResponse<T>(path: string, _options: { method: string; token?: string; body?: unknown }): T {
+  void _options;
   // Simulate network delay
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -309,21 +323,4 @@ export async function depositIntent(
   params: { circle_id: string; purpose: "collateral" | "prefund"; amount_usdt: string | number }
 ): Promise<DepositIntentResponse> {
   return await apiFetch<DepositIntentResponse>("circles-deposit-intent", { method: "POST", token, body: params });
-}
-
-// ============================================
-// AUCTION API
-// ============================================
-
-export type PublishBidResponse = { ok: true };
-
-/**
- * Store bid data server-side for convenience (optional - bid is on-chain)
- * This helps users recover their bid if they lose local storage
- */
-export async function publishBid(
-  token: string,
-  params: { circle_id: string; bid_amount: string; salt: string }
-): Promise<PublishBidResponse> {
-  return await apiFetch<PublishBidResponse>("auction-publish-bid", { method: "POST", token, body: params });
 }

@@ -1,6 +1,6 @@
 import { TonConnectButton } from "@tonconnect/ui-react";
 import { Address } from "@ton/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import type { ApiError, CircleStatusResponse } from "../lib/api";
@@ -13,8 +13,9 @@ import { Page } from "../components/layout/Page";
 import { FundsBanner } from "../components/mc/FundsBanner";
 import { IndexerLagBanner } from "../components/mc/IndexerLagBanner";
 import { OnChainScheduleCard } from "../components/mc/OnChainScheduleCard";
-import { Badge, getStatusBadgeVariant } from "../components/ui/Badge";
-import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { getStatusBadgeVariant } from "../components/ui/badgeVariants";
+import { Button, type ButtonVariant } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { AlertCard, Card, CardContent, CardDescription, CardHeader, CardTitle, StatCard } from "../components/ui/Card";
 import {
@@ -56,7 +57,7 @@ function fmtDuration(sec: number): string {
   return `${Math.max(1, m)}m`;
 }
 
-function ProgressRing(props: { value: number; tone: "blue" | "emerald" | "amber"; children: React.ReactNode }) {
+function ProgressRing(props: { value: number; tone: "blue" | "emerald" | "amber"; children: ReactNode }) {
   const value = clamp01(props.value);
   const palette = {
     blue: { on: "rgba(96, 165, 250, 0.95)", track: "rgba(148, 163, 184, 0.12)" },
@@ -99,13 +100,15 @@ export function CirclePage() {
 
   const canLoad = auth.status === "ready" && circleId.length > 0;
   const humanError = error ? describeError(error) : null;
+  const isLeader = Boolean(auth.group?.bot_admin);
 
   const refresh = async () => {
-    if (!canLoad) return;
+    if (auth.status !== "ready" || circleId.length === 0) return;
+    const token = auth.token;
     setLoading(true);
     setError(null);
     try {
-      const res = await getCircleStatus(auth.token, circleId);
+      const res = await getCircleStatus(token, circleId);
       setData(res);
     } catch (e: unknown) {
       const err = (e ?? {}) as Partial<ApiError>;
@@ -147,7 +150,7 @@ export function CirclePage() {
 
   const ctas = useMemo(() => {
     if (!circle) return [];
-    const out: Array<{ label: string; to: string; variant?: "default" | "secondary" | "danger" | "ghost" | "link" }> = [];
+    const out: Array<{ label: string; to: string; variant?: ButtonVariant }> = [];
     const status = String(circle.status);
     const withdrawable = toBigIntSafe(member?.withdrawable);
     const isOnchainJoined = String(member?.join_status ?? "") === "onchain_joined";
@@ -226,35 +229,86 @@ export function CirclePage() {
       (String(circle.status) === "Locked" || String(circle.status) === "Active")
   );
 
+  const dueCountdownSec = dueAtSec != null ? dueAtSec - nowSec : null;
+  const dueLabel = dueCountdownSec != null ? (dueCountdownSec <= 0 ? "Due now" : `Due in ${fmtDuration(dueCountdownSec)}`) : null;
+
+  const fundedCount = circle?.onchain_funded_count ?? null;
+  const fundedTotal = circle?.n_members ?? null;
+  const fundedRatio =
+    fundedCount != null && fundedTotal != null && fundedTotal > 0 ? clamp01(fundedCount / fundedTotal) : null;
+
+  const collateralAmount = Number.parseFloat(collateralUsdt);
+  const prefundAmount = Number.parseFloat(prefundUsdt);
+  const collateralAmountOk = Number.isFinite(collateralAmount) && collateralAmount > 0;
+  const prefundAmountOk = Number.isFinite(prefundAmount) && prefundAmount > 0;
+
+  const bottomDock =
+    ctas.length > 0 ? (
+      <div className={cn("grid gap-2", ctas.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+        {ctas.map((c) => (
+          <Link key={c.to} to={c.to} className={ctas.length === 1 ? "col-span-1" : undefined}>
+            <Button variant={c.variant} className="w-full h-12 text-base">
+              {c.label}
+            </Button>
+          </Link>
+        ))}
+      </div>
+    ) : null;
+
   return (
-    <Page title={circle?.name ?? "Circle"}>
+    <Page
+      title={circle?.name ?? "Circle"}
+      subtitle={circle ? displayStatus(String(circle.status)) : undefined}
+      leading={
+        <Link
+          to="/"
+          className={cn(
+            "inline-flex items-center justify-center h-10 w-10 rounded-xl",
+            "border border-slate-800/60 bg-slate-950/40 text-slate-300",
+            "hover:bg-slate-900/60 hover:text-slate-100 transition-colors"
+          )}
+          aria-label="Back"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+      }
+      headerAction={
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void refresh()}
+            disabled={loading || !!busy}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            {loading ? (
+              <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            ) : (
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+          </Button>
+          <TonConnectButton className="scale-90 origin-right" />
+        </div>
+      }
+      bottomDock={bottomDock}
+    >
       <div className="space-y-6">
         <FundsBanner />
         <IndexerLagBanner circle={circle} />
 
-        {/* Top Nav */}
-        <div className="flex items-center justify-between">
-          <Link to="/" className="text-sm text-slate-400 hover:text-slate-100 transition-colors flex items-center gap-1">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
-            </svg>
-            Back
-          </Link>
-          <div className="flex items-center gap-3">
-             <Button className="h-8 px-3 text-xs" variant="ghost" onClick={() => void refresh()} disabled={loading || !!busy}>
-              {loading ? "Refreshing..." : "Refresh"}
-            </Button>
-            <TonConnectButton className="scale-90 origin-right" />
-          </div>
-        </div>
-
         {error && humanError ? (
-          <Card className="border-red-900/50 bg-red-950/20">
-            <CardContent>
-               <h3 className="text-red-400 font-bold mb-1">{humanError.title}</h3>
-               <p className="text-red-200/70 text-sm">{humanError.description}</p>
-            </CardContent>
-          </Card>
+          <AlertCard variant="error" title={humanError.title}>
+            {humanError.description}
+            <div className="mt-2 text-xs text-slate-500">Code: {error.code}</div>
+          </AlertCard>
         ) : null}
         
         {busy && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm text-white font-display text-xl animate-pulse">{busy}</div>}
@@ -263,43 +317,127 @@ export function CirclePage() {
           <div className="text-center py-12 text-slate-500">Loading circle details...</div>
         ) : (
           <>
-            {/* Header Info */}
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                 <h1 className="text-2xl font-display font-bold text-slate-50">{circle.name ?? `Circle #${circle.circle_id}`}</h1>
-                 <Badge variant="success" className="h-6 px-3">{displayStatus(String(circle.status))}</Badge>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                <span>Contract:</span>
-                {circle.contract_address ? (
-                  <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">{circle.contract_address.slice(0, 4)}...{circle.contract_address.slice(-4)}</span>
-                ) : <span className="text-orange-400">Not Deployed</span>}
-              </div>
-            </div>
+            <Card variant="vault" className="animate-slide-up">
+              <CardContent className="p-4 space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={getStatusBadgeVariant(String(circle.status))} className="font-mono text-[10px]">
+                        {displayStatus(String(circle.status))}
+                      </Badge>
+                      {dueLabel ? (
+                        <Badge
+                          variant={dueCountdownSec != null && dueCountdownSec <= 0 ? "warning" : "secondary"}
+                          className="font-mono text-[10px]"
+                        >
+                          {dueLabel}
+                        </Badge>
+                      ) : null}
+                    </div>
 
-            {/* CTAs Main */}
-            {ctas.length > 0 && (
-              <div className="grid grid-cols-2 gap-3">
-                {ctas.map((c) => (
-                  <Link key={c.to} to={c.to} className="w-full col-span-2 last:col-span-2 sm:col-span-1">
-                    <Button variant={c.variant as any} className="w-full text-base py-6 shadow-lg shadow-blue-900/20">
-                       {c.label}
-                    </Button>
-                  </Link>
-                ))}
-              </div>
-            )}
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                        Pool per round
+                      </div>
+                      <div className="mt-1 text-3xl font-semibold text-slate-50 font-mono-safe leading-none">
+                        {formatUsdt(potUnits)}
+                        <span className="ml-1 text-xs text-slate-500 align-top">USDT</span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {formatUsdt(contributionUnits)} USDT per member • {circle.n_members} members
+                      </div>
+                    </div>
+                  </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-2 gap-3">
-               <StatItem label="Contribution" value={`${formatUsdt(contributionUnits)} USDT`} />
-               <StatItem label="Pool Size" value={`${formatUsdt(potUnits)} USDT`} sub={`${circle.n_members} Members`} />
-               <StatItem label="Collateral" value={`${(Number(circle.collateral_rate_bps)/100).toFixed(0)}%`} sub={`of Pool`} />
-               <StatItem label="Round" value={String(circle.round_id ?? 0)} sub="Current" />
-            </div>
+                  {fundedRatio != null && fundedCount != null ? (
+                    <div className="shrink-0">
+                      <ProgressRing
+                        value={fundedRatio}
+                        tone={fundedRatio >= 1 ? "emerald" : fundedRatio >= 0.5 ? "blue" : "amber"}
+                      >
+                        <div className="text-center">
+                          <div className="text-sm font-semibold text-slate-100 font-mono-safe leading-none">
+                            {fundedCount}/{circle.n_members}
+                          </div>
+                          <div className="mt-1 text-[10px] text-slate-500">Funded</div>
+                        </div>
+                      </ProgressRing>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <StatCard
+                    label="Contribution"
+                    value={`${formatUsdt(contributionUnits)} USDT`}
+                    subValue="per member"
+                    icon={
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-10V6m0 12v-2m9-4a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    }
+                  />
+                  <StatCard
+                    label="Members"
+                    value={String(circle.n_members)}
+                    subValue="total slots"
+                    icon={
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    }
+                  />
+                  <StatCard
+                    label="Collateral"
+                    value={`${(Number(circle.collateral_rate_bps) / 100).toFixed(0)}%`}
+                    subValue="of pool"
+                    icon={
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    }
+                  />
+                  <StatCard
+                    label="Round"
+                    value={String((circle.current_cycle_index ?? 0) + 1)}
+                    subValue={Number.isFinite(circle.total_cycles) ? `of ${circle.total_cycles}` : "current"}
+                    icon={
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
+                  <span>Contract</span>
+                  {circle.contract_address ? (
+                    <span className="inline-flex items-center rounded-lg bg-slate-900/60 border border-slate-800/60 px-2 py-1 text-slate-300">
+                      {circle.contract_address.slice(0, 4)}…{circle.contract_address.slice(-4)}
+                    </span>
+                  ) : (
+                    <span className="text-amber-400">Not deployed</span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {!walletMatchesMember && boundWalletAddress && connectedWalletAddress ? (
+              <AlertCard variant="warning" title="Wrong wallet connected">
+                Connect the wallet you joined with to deposit and withdraw.
+                <div className="mt-2 grid gap-1 text-[11px] text-slate-400 font-mono">
+                  <div>
+                    Expected: {boundWalletAddress.slice(0, 6)}…{boundWalletAddress.slice(-6)}
+                  </div>
+                  <div>
+                    Connected: {connectedWalletAddress.slice(0, 6)}…{connectedWalletAddress.slice(-6)}
+                  </div>
+                </div>
+              </AlertCard>
+            ) : null}
 
             {/* OnChain Schedule */}
-            <OnChainScheduleCard circle={circle} />
+            <OnChainScheduleCard circle={circle} nowMs={nowSec * 1000} />
 
             {/* My Position (Vault) */}
             <Card className="border-blue-500/20 bg-slate-900/80">
@@ -350,159 +488,293 @@ export function CirclePage() {
 
             {/* Deposit Actions */}
             {circle.contract_address && String(circle.status) !== "Completed" && String(circle.status) !== "Terminated" && (
-               <Card>
-                 <CardHeader>
-                   <CardTitle>Add Funds</CardTitle>
-                 </CardHeader>
-                 <CardContent className="space-y-4">
-                    <div className="grid gap-2">
-                        <label className="text-xs text-slate-400 font-bold uppercase">Collateral (Security Deposit)</label>
-                        <div className="flex gap-2">
-                           <input
-                            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                            value={collateralUsdt}
-                            onChange={(e) => setCollateralUsdt(e.target.value)}
-                            inputMode="decimal"
-                            placeholder="Amount"
-                           />
-                           <Button onClick={async () => {
-                              if (auth.status !== "ready") return;
-                              if (!wallet) { setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." }); return; }
-                              if (!walletMatchesMember) { setError({ code: "WALLET_MISMATCH", message: "Switch to bound wallet." }); return; }
-                              if (!circle.onchain_jetton_wallet) { setError({ code: "JETTON_WALLET_NOT_INITIALIZED", message: "Contract wallet not ready." }); return; }
-                              
-                              setBusy("Sign Collateral Deposit...");
-                              setError(null);
-                              try {
-                                const intent = await depositIntent(auth.token, { circle_id: circleId, purpose: "collateral", amount_usdt: collateralUsdt });
-                                await sendTransaction({ // Replaced tonConnectUI
-                                  validUntil: Math.floor(Date.now() / 1000) + 300,
-                                  messages: [{ address: intent.jetton_wallet, amount: intent.tx_value_nano, payload: intent.payload_base64 }]
-                                });
-                                await refresh();
-                              } catch(e: any) {
-                                setError({ code: "TX_FAILED", message: e.message });
-                              } finally { setBusy(null); }
-                           }} disabled={!!busy}>Deposit</Button>
+              <Card>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>Add funds</CardTitle>
+                      <CardDescription>Deposits are recorded on-chain via smart contract notifications.</CardDescription>
+                    </div>
+                    <Badge
+                      variant={circle.onchain_jetton_wallet ? "secondary" : "warning"}
+                      className="font-mono text-[10px]"
+                    >
+                      {circle.onchain_jetton_wallet ? "Jetton ready" : "Init required"}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {!circle.onchain_jetton_wallet ? (
+                    <div className="rounded-xl border border-amber-800/40 bg-amber-950/10 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-amber-100">One-time setup: Init contract wallet</div>
+                          <div className="mt-1 text-[11px] text-amber-200/80 leading-relaxed">
+                            Costs ~0.05 TON network fee. Only needs to be done once for this circle; any member can do it.
+                          </div>
                         </div>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={async () => {
+                            if (!wallet) { setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." }); return; }
+                            setBusy("Initializing…");
+                            setError(null);
+                            try {
+                              await sendTransaction({
+                                validUntil: Math.floor(Date.now()/1000)+300,
+                                messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildInitJettonWalletPayload() }]
+                              });
+                              await refresh();
+                            } catch (e: unknown) {
+                              const maybe = (e ?? {}) as { message?: unknown };
+                              setError({code: "TX_FAILED", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed."});
+                            } finally { setBusy(null); }
+                          }}
+                          disabled={!!busy}
+                        >
+                          Init now
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-200">Collateral</div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Required: {formatUsdt(collateralRequiredUnits)} USDT
+                          {missingCollateralUnits > 0n ? ` • Missing: ${formatUsdt(missingCollateralUnits)} USDT` : ""}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-[11px] text-blue-400 hover:text-blue-300"
+                        onClick={() => {
+                          const v =
+                            missingCollateralUnits > 0n ? formatUsdt(missingCollateralUnits) : formatUsdt(collateralRequiredUnits);
+                          setCollateralUsdt(v);
+                        }}
+                      >
+                        Use required
+                      </button>
                     </div>
 
-                    <div className="grid gap-2">
-                        <label className="text-xs text-slate-400 font-bold uppercase">Prefund (Future Payments)</label>
-                        <div className="flex gap-2">
-                           <input
-                            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                            value={prefundUsdt}
-                            onChange={(e) => setPrefundUsdt(e.target.value)}
-                            inputMode="decimal"
-                            placeholder="Amount"
-                           />
-                           <Button onClick={async () => {
-                              if (auth.status !== "ready") return;
-                              if (!wallet) { setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." }); return; }
-                              if (!walletMatchesMember) { setError({ code: "WALLET_MISMATCH", message: "Switch to bound wallet." }); return; }
-                              if (!circle.onchain_jetton_wallet) { setError({ code: "JETTON_WALLET_NOT_INITIALIZED", message: "Contract wallet not ready." }); return; }
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="flex-1">
+                        <Input
+                          value={collateralUsdt}
+                          onChange={(e) => setCollateralUsdt(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          className="font-mono"
+                        />
+                      </div>
+                      <Button
+                        onClick={async () => {
+                          if (auth.status !== "ready") return;
+                          if (!wallet) { setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." }); return; }
+                          if (!walletMatchesMember) { setError({ code: "WALLET_MISMATCH", message: "Switch to bound wallet." }); return; }
+                          if (!circle.onchain_jetton_wallet) { setError({ code: "JETTON_WALLET_NOT_INITIALIZED", message: "Contract wallet not ready." }); return; }
 
-                              setBusy("Sign Prefund Deposit...");
-                              setError(null);
-                              try {
-                                const intent = await depositIntent(auth.token, { circle_id: circleId, purpose: "prefund", amount_usdt: prefundUsdt });
-                                await sendTransaction({ // Replaced tonConnectUI
-                                  validUntil: Math.floor(Date.now() / 1000) + 300,
-                                  messages: [{ address: intent.jetton_wallet, amount: intent.tx_value_nano, payload: intent.payload_base64 }]
-                                });
-                                await refresh();
-                              } catch(e: any) {
-                                setError({ code: "TX_FAILED", message: e.message });
-                              } finally { setBusy(null); }
-                           }} disabled={!!busy}>Deposit</Button>
-                        </div>
+                          setBusy("Sign collateral deposit…");
+                          setError(null);
+                          try {
+                            const intent = await depositIntent(auth.token, { circle_id: circleId, purpose: "collateral", amount_usdt: collateralUsdt });
+                            await sendTransaction({
+                              validUntil: Math.floor(Date.now() / 1000) + 300,
+                              messages: [{ address: intent.jetton_wallet, amount: intent.tx_value_nano, payload: intent.payload_base64 }]
+                            });
+                            await refresh();
+                          } catch (e: unknown) {
+                            const maybe = (e ?? {}) as { message?: unknown };
+                            setError({ code: "TX_FAILED", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed." });
+                          } finally { setBusy(null); }
+                        }}
+                        disabled={!!busy || !collateralAmountOk}
+                      >
+                        Deposit
+                      </Button>
                     </div>
-                 </CardContent>
-               </Card>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-200">Prefund</div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Recommended: ≥ {formatUsdt(contributionUnits)} USDT (1 cycle)
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-[11px] text-blue-400 hover:text-blue-300"
+                        onClick={() => setPrefundUsdt(formatUsdt(contributionUnits))}
+                      >
+                        Use 1 cycle
+                      </button>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="flex-1">
+                        <Input
+                          value={prefundUsdt}
+                          onChange={(e) => setPrefundUsdt(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          className="font-mono"
+                        />
+                      </div>
+                      <Button
+                        onClick={async () => {
+                          if (auth.status !== "ready") return;
+                          if (!wallet) { setError({ code: "WALLET_NOT_CONNECTED", message: "Connect wallet first." }); return; }
+                          if (!walletMatchesMember) { setError({ code: "WALLET_MISMATCH", message: "Switch to bound wallet." }); return; }
+                          if (!circle.onchain_jetton_wallet) { setError({ code: "JETTON_WALLET_NOT_INITIALIZED", message: "Contract wallet not ready." }); return; }
+
+                          setBusy("Sign prefund deposit…");
+                          setError(null);
+                          try {
+                            const intent = await depositIntent(auth.token, { circle_id: circleId, purpose: "prefund", amount_usdt: prefundUsdt });
+                            await sendTransaction({
+                              validUntil: Math.floor(Date.now() / 1000) + 300,
+                              messages: [{ address: intent.jetton_wallet, amount: intent.tx_value_nano, payload: intent.payload_base64 }]
+                            });
+                            await refresh();
+                          } catch (e: unknown) {
+                            const maybe = (e ?? {}) as { message?: unknown };
+                            setError({ code: "TX_FAILED", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed." });
+                          } finally { setBusy(null); }
+                        }}
+                        disabled={!!busy || !prefundAmountOk}
+                      >
+                        Deposit
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                    Make sure you have enough TON for network fees. Deposits will appear after the indexer syncs.
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
-            {/* Admin / Setup Zone (Hidden if all good) */}
-            <div className="pt-8 pb-4">
-              <div className="text-xs font-bold text-slate-600 uppercase tracking-widest text-center mb-4">— Admin & Safety —</div>
-              
-              <div className="space-y-4 opacity-80 hover:opacity-100 transition-opacity">
+            {isLeader ? (
+              <details className="rounded-2xl border border-slate-800/60 bg-slate-900/30">
+                <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-slate-300 flex items-center justify-between">
+                  <span>Leader tools</span>
+                  <span className="text-[10px] font-mono text-slate-500">advanced</span>
+                </summary>
+                <div className="px-4 pb-4 space-y-4">
+                  <AlertCard variant="warning" title="High-risk actions">
+                    These actions cost TON fees and may be irreversible. Most members never need this section.
+                  </AlertCard>
+
                 {String(circle.status) === "Recruiting" && !circle.contract_address && (
                   <Card className="border-dashed border-slate-700">
-                    <CardHeader><CardTitle>Setup: Attach Contract</CardTitle></CardHeader>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Attach contract</CardTitle>
+                      <CardDescription>Link the deployed contract address to this circle.</CardDescription>
+                    </CardHeader>
                     <CardContent>
-                       <div className="flex gap-2">
-                          <input 
-                            className="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-sm"
-                            value={contractAddressInput} 
-                            onChange={e => setContractAddressInput(e.target.value)} 
-                            placeholder="Contract Address"
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <Input
+                            value={contractAddressInput}
+                            onChange={(e) => setContractAddressInput(e.target.value)}
+                            placeholder="EQ… contract address"
+                            className="font-mono"
                           />
-                          <Button onClick={async () => {
-                             setBusy("Attaching...");
-                             try { await attachContract(auth.token, { circle_id: circleId, contract_address: contractAddressInput }); await refresh(); }
-                             catch(e: any) { setError({code: "API", message: e.message}); }
-                             finally { setBusy(null); }
-                          }} disabled={!!busy}>Attach</Button>
-                       </div>
+                        </div>
+                        <Button
+                          onClick={async () => {
+                            if (auth.status !== "ready") return;
+                            setBusy("Attaching…");
+                            try { await attachContract(auth.token, { circle_id: circleId, contract_address: contractAddressInput }); await refresh(); }
+                            catch (e: unknown) {
+                              const maybe = (e ?? {}) as { message?: unknown };
+                              setError({code: "API", message: typeof maybe.message === "string" ? maybe.message : "Attach failed."});
+                            }
+                            finally { setBusy(null); }
+                          }}
+                          disabled={!!busy || contractAddressInput.trim().length === 0}
+                        >
+                          Attach
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 )}
 
-                {circle.contract_address && !circle.onchain_jetton_wallet && (
-                   <div className="text-center">
-                      <Button variant="ghost" onClick={async () => {
-                         setBusy("Initializing Wallet...");
-                         try {
-                           await sendTransaction({ // Replaced
-                             validUntil: Math.floor(Date.now()/1000)+300,
-                             messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildInitJettonWalletPayload() }]
-                           });
-                         } catch(e: any) { setError({code: "TX", message: e.message}); }
-                         finally { setBusy(null); }
-                      }} disabled={!!busy}>⚠️ Init Contract Wallet (Required)</Button>
-                   </div>
-                )}
-
-                {/* Keep Alive / Emergency Actions */}
                 {circle.contract_address && (
                   <div className="grid grid-cols-2 gap-2">
-                     <Button variant="secondary" disabled={!canRunDebit || !!busy} onClick={async () => {
-                        if(!confirm("Run debit?")) return;
-                        setBusy("Debit...");
-                        try {
-                           await sendTransaction({ // Replaced
-                             validUntil: Math.floor(Date.now()/1000)+300,
-                             messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildTriggerDebitAllPayload() }]
-                           });
-                        } catch(e: any) { setError({code: "TX", message: e.message}); } finally { setBusy(null); }
-                     }}>Force Debit</Button>
-                     
-                     <Button variant="secondary" disabled={!canFinalizeAuction || !!busy} onClick={async () => {
-                        if(!confirm("Finalize Auction?")) return;
-                        setBusy("Finalizing...");
-                        try {
-                           await sendTransaction({ // Replaced
-                             validUntil: Math.floor(Date.now()/1000)+300,
-                             messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildFinalizeAuctionPayload() }]
-                           });
-                        } catch(e: any) { setError({code: "TX", message: e.message}); } finally { setBusy(null); }
-                     }}>Finalize Auction</Button>
+                    <Button
+                      variant="secondary"
+	                      disabled={!canRunDebit || !!busy}
+	                      onClick={async () => {
+	                        if(!confirm("Run debit? Costs TON fee.")) return;
+	                        setBusy("Debiting…");
+	                        try {
+	                          await sendTransaction({
+	                            validUntil: Math.floor(Date.now()/1000)+300,
+                            messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildTriggerDebitAllPayload() }]
+                          });
+                        } catch (e: unknown) {
+                          const maybe = (e ?? {}) as { message?: unknown };
+                          setError({code: "TX", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed."});
+                        } finally { setBusy(null); }
+                      }}
+                    >
+                      Force Debit
+                    </Button>
 
-                     <Button className="col-span-2 mt-2" variant="danger" disabled={!canTerminateDefault || !!busy} onClick={async () => {
-                        if(!confirm("TERMINATE DEFAULT? Irreversible.")) return;
-                        setBusy("Terminating...");
-                        try {
-                           await sendTransaction({ // Replaced
-                             validUntil: Math.floor(Date.now()/1000)+300,
-                             messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildTerminateDefaultPayload() }]
-                           });
-                        } catch(e: any) { setError({code: "TX", message: e.message}); } finally { setBusy(null); }
-                     }}>Terminate Default</Button>
+                    <Button
+                      variant="secondary"
+	                      disabled={!canFinalizeAuction || !!busy}
+	                      onClick={async () => {
+	                        if(!confirm("Finalize auction? Costs TON fee.")) return;
+	                        setBusy("Finalizing…");
+	                        try {
+	                          await sendTransaction({
+	                            validUntil: Math.floor(Date.now()/1000)+300,
+                            messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildFinalizeAuctionPayload() }]
+                          });
+                        } catch (e: unknown) {
+                          const maybe = (e ?? {}) as { message?: unknown };
+                          setError({code: "TX", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed."});
+                        } finally { setBusy(null); }
+                      }}
+                    >
+                      Finalize
+                    </Button>
+
+                    <Button
+                      className="col-span-2"
+                      variant="danger"
+	                      disabled={!canTerminateDefault || !!busy}
+	                      onClick={async () => {
+	                        if(!confirm("TERMINATE DEFAULT? Irreversible and costs TON fee.")) return;
+	                        setBusy("Terminating…");
+	                        try {
+	                          await sendTransaction({
+	                            validUntil: Math.floor(Date.now()/1000)+300,
+                            messages: [{ address: circle.contract_address!, amount: toNano("0.05"), payload: buildTerminateDefaultPayload() }]
+                          });
+                        } catch (e: unknown) {
+                          const maybe = (e ?? {}) as { message?: unknown };
+                          setError({code: "TX", message: typeof maybe.message === "string" ? maybe.message : "Transaction failed."});
+                        } finally { setBusy(null); }
+                      }}
+                    >
+                      Terminate Default
+                    </Button>
                   </div>
                 )}
-              </div>
-            </div>
+                </div>
+              </details>
+            ) : null}
           </>
         )}
       </div>
