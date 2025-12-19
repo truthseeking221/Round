@@ -71,7 +71,10 @@ Deno.serve(async (req) => {
     .single();
   if (circleRes.error || !circleRes.data) return errorResponse("CIRCLE_NOT_FOUND", 404, undefined, origin);
 
-  if (session.group_chat_id && Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
+  if (!session.group_chat_id) {
+    return errorResponse("TG_GROUP_REQUIRED", 400, "Open the mini app inside a Telegram group", origin);
+  }
+  if (Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
     return errorResponse("FORBIDDEN", 403, undefined, origin);
   }
   if (Number(session.telegram_user_id) !== Number(circleRes.data.leader_user_id)) {

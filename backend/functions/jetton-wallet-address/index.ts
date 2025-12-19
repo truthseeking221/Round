@@ -45,8 +45,10 @@ Deno.serve(async (req) => {
     .single();
   if (circleRes.error || !circleRes.data) return errorResponse("CIRCLE_NOT_FOUND", 404, undefined, origin);
 
-  // If session is tied to a group, require circle belongs to it.
-  if (session.group_chat_id && Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
+  if (!session.group_chat_id) {
+    return errorResponse("TG_GROUP_REQUIRED", 400, "Open the mini app inside a Telegram group", origin);
+  }
+  if (Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
     return errorResponse("FORBIDDEN", 403, undefined, origin);
   }
 
@@ -83,4 +85,3 @@ Deno.serve(async (req) => {
 
   return jsonResponse({ jetton_wallet_address: walletAddress, owner, jetton_master: master }, 200, origin);
 });
-

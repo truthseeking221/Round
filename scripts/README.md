@@ -42,3 +42,7 @@ npx tsx scripts/verify.ts --network testnet EQ...contract_address
 
 For step-by-step manual deployment, see `docs/BUILD_GUIDE.md`.
 
+
+
+
+

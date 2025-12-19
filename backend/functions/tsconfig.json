@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2022", "DOM"],
+    "strict": false,
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "deno.d.ts"],
+  "exclude": ["**/node_modules", "../**/node_modules"]
+}

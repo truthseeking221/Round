@@ -154,6 +154,10 @@ async function handleMessage(msg) {
       return;
     }
     const circles = await listCircles(chatId);
+    if (circles.length === 0) {
+      await safeSendMessage(chatId, "No circles found for this group yet.");
+      return;
+    }
     const active = circles.find((c) => c.status === "Active" || c.status === "Locked") ?? circles[0];
     await safeSendMessage(chatId, renderCircleStatus(active));
     return;

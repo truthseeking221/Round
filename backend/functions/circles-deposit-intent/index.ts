@@ -5,7 +5,7 @@ import { requireSession } from "../_shared/auth.ts";
 import { enforceRateLimit } from "../_shared/rate-limit.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
 import { runGetMethodWithRetry } from "../_shared/tonapi.ts";
-import { readAddressFromStackRecord, readNumAt, unwrapTuple } from "../_shared/tvm.ts";
+import { readAddressFromStackRecord, readNumAt, readOptionalAddressFromStackRecord, unwrapTuple } from "../_shared/tvm.ts";
 import { parseUsdtToUnits } from "../_shared/usdt.ts";
 
 type DepositIntentRequest = {
@@ -81,8 +81,15 @@ Deno.serve(async (req) => {
   if (circleRes.error || !circleRes.data) return errorResponse("CIRCLE_NOT_FOUND", 404, undefined, origin);
   if (!circleRes.data.contract_address) return errorResponse("CONTRACT_NOT_READY", 400, undefined, origin);
   if (circleRes.data.status === "EmergencyStop") return errorResponse("EMERGENCY_STOP", 400, undefined, origin);
-  if (!circleRes.data.onchain_jetton_wallet)
-    return errorResponse("JETTON_WALLET_NOT_INITIALIZED", 400, "Run INIT first", origin);
+
+  if (!session.group_chat_id) {
+    return errorResponse("TG_GROUP_REQUIRED", 400, "Open the mini app inside a Telegram group", origin);
+  }
+  if (Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
+    return errorResponse("FORBIDDEN", 403, undefined, origin);
+  }
+
+  const contractAddress = String(circleRes.data.contract_address);
 
   // Prevent silent fund loss: CircleContract ignores deposits < min_deposit_units.
   try {
@@ -92,10 +99,6 @@ Deno.serve(async (req) => {
     }
   } catch {
     return errorResponse("SERVER_MISCONFIGURED", 500, "Invalid min_deposit_units", origin);
-  }
-
-  if (session.group_chat_id && Number(session.group_chat_id) !== Number(circleRes.data.group_chat_id)) {
-    return errorResponse("FORBIDDEN", 403, undefined, origin);
   }
 
   const memberRes = await supabase
@@ -116,7 +119,7 @@ Deno.serve(async (req) => {
   // Safety: DB is only a UX mirror. Verify the wallet is an active on-chain member before generating a deposit payload.
   // This prevents fund loss if `join_status` is stale (e.g., user exited Recruiting but DB still says onchain_joined).
   const mvExec = await runGetMethodWithRetry({
-    account: String(circleRes.data.contract_address),
+    account: contractAddress,
     method: "get_member",
     args: [owner],
     maxRetries: 2,
@@ -133,6 +136,14 @@ Deno.serve(async (req) => {
       .update({ join_status: "onchain_joined" })
       .eq("circle_id", body.circle_id)
       .eq("telegram_user_id", session.telegram_user_id);
+  }
+
+  const jwExec = await runGetMethodWithRetry({ account: contractAddress, method: "get_jetton_wallet", maxRetries: 2 });
+  if (!jwExec || !jwExec.success) return errorResponse("CHAIN_UNAVAILABLE", 502, undefined, origin);
+  const jwTuple = unwrapTuple(jwExec.stack);
+  const circleJettonWallet = jwTuple.length ? readOptionalAddressFromStackRecord(jwTuple[0])?.toString() ?? null : null;
+  if (!circleJettonWallet) {
+    return errorResponse("JETTON_WALLET_NOT_INITIALIZED", 400, "Run INIT first", origin);
   }
 
   const exec = await runGetMethodWithRetry({ account: jettonMaster, method: "get_wallet_address", args: [owner], maxRetries: 3 });
@@ -155,7 +166,7 @@ Deno.serve(async (req) => {
     .storeUint(OP_JETTON_TRANSFER, 32)
     .storeUint(0, 64) // query_id
     .storeCoins(amountUnits)
-    .storeAddress(Address.parse(String(circleRes.data.contract_address))) // destination owner
+    .storeAddress(Address.parse(circleJettonWallet)) // destination jetton wallet (recipient)
     .storeAddress(Address.parse(owner)) // response_destination
     .storeBit(false) // custom_payload = null
     .storeCoins(FORWARD_TON_AMOUNT)

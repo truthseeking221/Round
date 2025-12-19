@@ -86,7 +86,7 @@ export function CirclePage() {
   const params = useParams();
   const circleId = String(params.circleId ?? "");
 
-  const { wallet, sendTransaction } = useSmartWallet(); // Use Smart Wallet
+  const { wallet, sendTransaction, isMock } = useSmartWallet(); // Use Smart Wallet
 
   const [data, setData] = useState<CircleStatusResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -188,9 +188,9 @@ export function CirclePage() {
     try {
       return Address.parse(connectedWalletAddress).equals(Address.parse(boundWalletAddress));
     } catch {
-      return true; // Assume true if mock or invalid address format
+      return Boolean(isMock); // Fail closed unless running in mock mode
     }
-  }, [connectedWalletAddress, boundWalletAddress]);
+  }, [connectedWalletAddress, boundWalletAddress, isMock]);
 
   // Derived states for admin actions
   const dueAtSec = circle?.onchain_due_at ? Math.floor(Date.parse(String(circle.onchain_due_at)) / 1000) : null;
